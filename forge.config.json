@@ -1,0 +1,69 @@
+{
+  "version": 1,
+  "goal": "Maintain Forge, a reusable multi-model coding harness written in Go with JS starter templates, that loops until machine gates and independent review pass.",
+  "acceptance": {
+    "tests": true,
+    "coverage": {
+      "min": 70,
+      "file": null
+    },
+    "lint": true,
+    "typecheck": false,
+    "build": true,
+    "benchmarks": {
+      "required": true,
+      "resultsFile": "bench/results.json",
+      "thresholds": [
+        {
+          "metric": "parse_ops_per_sec",
+          "min": 100000,
+          "unit": "events/sec"
+        }
+      ]
+    },
+    "security": {
+      "enabled": true,
+      "maxSeverity": "medium",
+      "requireNoSecrets": true,
+      "scanners": [],
+      "ignore": []
+    },
+    "review": {
+      "enabled": true,
+      "maxBlockingFindings": 0
+    }
+  },
+  "commands": {
+    "install": null,
+    "test": "go test ./...",
+    "coverage": "go test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out | tail -1",
+    "lint": "go vet ./...",
+    "typecheck": null,
+    "build": "go build ./...",
+    "benchmark": "go run ./bench"
+  },
+  "pricing": {},
+  "budget": {
+    "maxUsd": 10,
+    "maxMinutes": 120,
+    "maxIterations": 4,
+    "maxTokens": 0
+  },
+  "loop": {
+    "repairAttempts": 1,
+    "escalateAfter": 2,
+    "stageTimeoutMinutes": 20,
+    "modelRetries": 1
+  },
+  "context": {
+    "maxFiles": 250,
+    "maxDocChars": 6000
+  },
+  "git": {
+    "checkpoint": false
+  },
+  "release": {
+    "enabled": true,
+    "tag": false
+  }
+}

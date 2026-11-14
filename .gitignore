@@ -1,0 +1,9 @@
+.forge/
+bench/results.json
+coverage.out
+coverage.html
+dist/
+build/
+/forge
+*.test
+*.log

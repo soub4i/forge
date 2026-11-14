@@ -1,0 +1,256 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://forge.local/forge.schema.json",
+  "title": "Forge harness config",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["goal"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "version": { "type": "integer", "const": 1 },
+    "goal": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The outcome the loop must achieve."
+    },
+    "acceptance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tests": { "type": "boolean", "default": true },
+        "coverage": {
+          "oneOf": [
+            { "type": "number", "minimum": 0, "maximum": 100 },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "min": { "type": "number", "minimum": 0, "maximum": 100 },
+                "file": { "type": ["string", "null"] }
+              }
+            }
+          ]
+        },
+        "lint": { "type": "boolean", "default": true },
+        "typecheck": { "type": "boolean", "default": true },
+        "build": { "type": "boolean", "default": true },
+        "benchmarks": {
+          "oneOf": [
+            {
+              "type": "array",
+              "items": { "$ref": "#/definitions/threshold" }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "required": { "type": "boolean" },
+                "resultsFile": { "type": "string" },
+                "thresholds": {
+                  "type": "array",
+                  "items": { "$ref": "#/definitions/threshold" }
+                }
+              }
+            }
+          ]
+        },
+        "security": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean", "default": true },
+            "maxSeverity": {
+              "type": "string",
+              "enum": ["info", "low", "medium", "high", "critical"],
+              "default": "medium"
+            },
+            "requireNoSecrets": { "type": "boolean", "default": true },
+            "scanners": {
+              "type": "array",
+              "items": {
+                "oneOf": [
+                  { "type": "string" },
+                  { "$ref": "#/definitions/scanner" }
+                ]
+              }
+            },
+            "ignore": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        },
+        "review": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean", "default": true },
+            "maxBlockingFindings": { "type": "integer", "minimum": 0, "default": 0 }
+          }
+        }
+      }
+    },
+    "commands": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "install": { "$ref": "#/definitions/command" },
+        "test": { "$ref": "#/definitions/command" },
+        "coverage": { "$ref": "#/definitions/command" },
+        "lint": { "$ref": "#/definitions/command" },
+        "typecheck": { "$ref": "#/definitions/command" },
+        "build": { "$ref": "#/definitions/command" },
+        "benchmark": { "$ref": "#/definitions/command" }
+      }
+    },
+    "models": {
+      "type": "object",
+      "description": "Per-stage model routing. Use large models for architecture/review and small/fast models for routine work.",
+      "additionalProperties": {
+        "oneOf": [
+          { "type": "string" },
+          { "$ref": "#/definitions/model" }
+        ]
+      },
+      "properties": {
+        "architect": { "$ref": "#/definitions/modelOrString" },
+        "designer": { "$ref": "#/definitions/modelOrString" },
+        "implementer": { "$ref": "#/definitions/modelOrString" },
+        "tester": { "$ref": "#/definitions/modelOrString" },
+        "fixer": { "$ref": "#/definitions/modelOrString" },
+        "benchmarker": { "$ref": "#/definitions/modelOrString" },
+        "security": { "$ref": "#/definitions/modelOrString" },
+        "reviewer": { "$ref": "#/definitions/modelOrString" },
+        "release": { "$ref": "#/definitions/modelOrString" },
+        "triage": { "$ref": "#/definitions/modelOrString" }
+      }
+    },
+    "pricing": {
+      "type": "object",
+      "description": "Optional USD per 1M tokens, keyed by provider/model. Used to enforce budgets when the provider does not report cost.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "input": { "type": "number", "minimum": 0 },
+          "output": { "type": "number", "minimum": 0 },
+          "inputPerM": { "type": "number", "minimum": 0 },
+          "outputPerM": { "type": "number", "minimum": 0 }
+        }
+      }
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxUsd": { "type": "number", "minimum": 0, "default": 10 },
+        "maxMinutes": { "type": "number", "minimum": 0, "default": 180 },
+        "maxIterations": { "type": "integer", "minimum": 0, "default": 8 },
+        "maxTokens": { "type": "integer", "minimum": 0, "default": 0 }
+      }
+    },
+    "loop": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repairAttempts": { "type": "integer", "minimum": 0, "default": 1 },
+        "escalateAfter": { "type": "integer", "minimum": 1, "default": 2 },
+        "stageTimeoutMinutes": { "type": "number", "minimum": 1, "default": 20 },
+        "modelRetries": { "type": "integer", "minimum": 0, "default": 1 }
+      }
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxFiles": { "type": "integer", "minimum": 20, "default": 250 },
+        "maxDocChars": { "type": "integer", "minimum": 1000, "default": 6000 }
+      }
+    },
+    "git": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "checkpoint": { "type": "boolean", "default": false }
+      }
+    },
+    "release": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean", "default": true },
+        "tag": { "type": "boolean", "default": false }
+      }
+    }
+  },
+  "definitions": {
+    "command": {
+      "oneOf": [
+        { "type": "string", "minLength": 1 },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["command"],
+          "properties": {
+            "command": { "type": "string", "minLength": 1 },
+            "timeoutMs": { "type": "integer", "minimum": 1 },
+            "optional": { "type": "boolean" }
+          }
+        },
+        { "type": "null" }
+      ]
+    },
+    "modelOrString": {
+      "oneOf": [
+        { "type": "string", "pattern": "^[^/]+/.+$" },
+        { "$ref": "#/definitions/model" }
+      ]
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model"],
+      "properties": {
+        "model": { "type": "string", "pattern": "^[^/]+/.+$" },
+        "tier": { "type": "string" },
+        "fallbacks": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "pricing": {
+          "type": "object",
+          "properties": {
+            "input": { "type": "number", "minimum": 0 },
+            "output": { "type": "number", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "threshold": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["metric"],
+      "properties": {
+        "metric": { "type": "string", "minLength": 1 },
+        "min": { "type": ["number", "null"] },
+        "max": { "type": ["number", "null"] },
+        "unit": { "type": "string" }
+      }
+    },
+    "scanner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command"],
+      "properties": {
+        "name": { "type": "string" },
+        "command": { "type": "string", "minLength": 1 },
+        "format": {
+          "type": "string",
+          "enum": ["npm-audit", "pip-audit", "semgrep", "trivy", "gitleaks", "govulncheck", "json", "text"]
+        },
+        "required": { "type": "boolean" },
+        "timeoutMs": { "type": "integer", "minimum": 1 }
+      }
+    }
+  }
+}
