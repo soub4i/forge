@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "goal": "Maintain Forge, a reusable multi-model coding harness written in Go with JS starter templates, that loops until machine gates and independent review pass.",
+  "goal": "Maintain Forge, a reusable language-agnostic multi-model coding harness written in Go, that loops until machine gates and independent review pass.",
   "acceptance": {
     "tests": true,
     "coverage": {

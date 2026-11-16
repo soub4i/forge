@@ -149,6 +149,19 @@ func TestInitStatusAndDryRun(t *testing.T) {
 	if code := Main([]string{"init", dir, "--template", "nope"}); code != 1 {
 		t.Fatalf("invalid template exit = %d", code)
 	}
+	defaultDir := filepath.Join(t.TempDir(), "default")
+	if code := Main([]string{"init", defaultDir, "--goal", "Default init"}); code != 0 {
+		t.Fatalf("default init exit = %d", code)
+	}
+	if util.FileExists(filepath.Join(defaultDir, "package.json")) {
+		t.Fatal("default init generated a JavaScript project")
+	}
+	if code := Main([]string{"init", defaultDir, "--template", "cli", "--force"}); code != 1 {
+		t.Fatalf("removed template exit = %d", code)
+	}
+	if code := Main([]string{"init", filepath.Join(t.TempDir(), "no-goal")}); code != 1 {
+		t.Fatalf("missing goal exit = %d", code)
+	}
 }
 
 func TestGatesCommand(t *testing.T) {

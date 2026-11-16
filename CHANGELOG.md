@@ -2,6 +2,27 @@
 
 All notable changes to Forge are documented here. The format follows Keep a Changelog, and releases use semantic versioning.
 
+## [1.2.0] - 2026-11-16
+
+### Removed
+
+- Embedded JavaScript `cli` and `log-aggregator` starter templates.
+- `--template cli` and `--template log-aggregator`. `--template none` remains accepted and is the default.
+
+### Changed
+
+- `forge init` now writes control files only (config, goal, schema, `AGENTS.md`, `.gitignore`) and never scaffolds application code. Use your own project tooling to create the project.
+- `forge init` defaults to `none`; omitting `--template` no longer generates a JavaScript project.
+- A new workspace requires `--goal`, since there is no template goal to fall back on. `--force` without `--goal` preserves the existing goal.
+- Init output no longer reports template files copied.
+- README, CLI help, and self-hosting docs describe bring-your-own-project usage.
+- Version bumped to 1.2.0.
+
+### Validated
+
+- Go unit and integration suite passes across all packages.
+- Self-gating run passes lint, build, tests, coverage, benchmarks, and secret/scanner checks.
+
 ## [1.1.0] - 2026-11-16
 
 ### Added

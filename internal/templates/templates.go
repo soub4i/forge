@@ -4,10 +4,7 @@ import (
 	"context"
 	"embed"
 	"fmt"
-	"io/fs"
-	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/soub4i/forge/internal/config"
@@ -17,132 +14,8 @@ import (
 	"github.com/soub4i/forge/internal/util"
 )
 
-//go:embed all:assets
+//go:embed assets
 var assets embed.FS
-
-// Templates lists the available starter templates.
-var Templates = []string{"cli", "log-aggregator", "none"}
-
-// PackageNameFor derives a safe package name from a directory.
-func PackageNameFor(dir, fallback string) string {
-	base := strings.ToLower(filepath.Base(dir))
-	var b strings.Builder
-	for _, r := range base {
-		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '.', r == '_', r == '-':
-			b.WriteRune(r)
-		default:
-			b.WriteByte('-')
-		}
-	}
-	cleaned := strings.Trim(b.String(), "-._")
-	if cleaned == "" {
-		return fallback
-	}
-	return cleaned
-}
-
-// DefaultGoal returns a template-specific goal statement.
-func DefaultGoal(template, name string) string {
-	switch template {
-	case "cli":
-		return fmt.Sprintf("Build %s, a fast, dependency-free developer CLI that counts lines, words, and UTF-8 bytes from stdin or files, supports JSON output, and is covered by unit tests and a throughput benchmark.", name)
-	case "log-aggregator":
-		return fmt.Sprintf("Build %s, a zero-dependency log aggregator CLI that streams NDJSON logs from stdin or files, filters by level and time window, aggregates counts and latency percentiles, handles malformed lines safely, and is covered by unit tests and a throughput benchmark.", name)
-	}
-	return "Describe the developer tool or service you want Forge to build."
-}
-
-func floatPtr(value float64) *float64 { return &value }
-
-// DefaultThresholds returns the template's benchmark thresholds.
-func DefaultThresholds(template string) []config.Threshold {
-	switch template {
-	case "cli":
-		return []config.Threshold{{Metric: "lines_per_sec", Min: floatPtr(100000), Unit: "lines/sec"}}
-	case "log-aggregator":
-		return []config.Threshold{{Metric: "events_per_sec", Min: floatPtr(50000), Unit: "events/sec"}}
-	}
-	return nil
-}
-
-func renderTemplate(text, name, goal, date, version string) string {
-	replacer := strings.NewReplacer(
-		"{{name}}", name,
-		"{{goal}}", goal,
-		"{{date}}", date,
-		"{{version}}", version,
-	)
-	return replacer.Replace(text)
-}
-
-type templateFile struct {
-	full string
-	rel  string
-}
-
-func walkTemplate(root string) ([]templateFile, error) {
-	var files []templateFile
-	err := fs.WalkDir(assets, root, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() {
-			if entry.Name() == ".git" || entry.Name() == "node_modules" {
-				return fs.SkipDir
-			}
-			return nil
-		}
-		rel, relErr := filepath.Rel(root, path)
-		if relErr != nil {
-			return relErr
-		}
-		files = append(files, templateFile{full: path, rel: filepath.ToSlash(rel)})
-		return nil
-	})
-	sort.Slice(files, func(i, j int) bool { return files[i].rel < files[j].rel })
-	return files, err
-}
-
-type copyResult struct {
-	Copied  []string
-	Skipped []string
-}
-
-func copyTemplate(name, dest string, force bool, context struct{ name, goal, date, version string }) (copyResult, error) {
-	result := copyResult{Copied: []string{}, Skipped: []string{}}
-	if name == "none" {
-		return result, nil
-	}
-	root := "assets/" + name
-	if _, err := fs.Stat(assets, root); err != nil {
-		return result, fmt.Errorf("unknown template: %s", name)
-	}
-	files, err := walkTemplate(root)
-	if err != nil {
-		return result, err
-	}
-	for _, file := range files {
-		target := filepath.Join(dest, filepath.FromSlash(file.rel))
-		if util.FileExists(target) && !force {
-			result.Skipped = append(result.Skipped, file.rel)
-			continue
-		}
-		data, err := assets.ReadFile(file.full)
-		if err != nil {
-			return result, err
-		}
-		content := renderTemplate(string(data), context.name, context.goal, context.date, context.version)
-		if err := util.WriteText(target, content); err != nil {
-			return result, err
-		}
-		if strings.HasSuffix(file.rel, "cli.js") || strings.HasPrefix(file.rel, "bin/") {
-			_ = os.Chmod(target, 0o755)
-		}
-		result.Copied = append(result.Copied, file.rel)
-	}
-	return result, nil
-}
 
 func ensureGitignore(dest string) bool {
 	file := filepath.Join(dest, ".gitignore")
@@ -235,11 +108,8 @@ type InitOptions struct {
 // InitResult describes a created workspace.
 type InitResult struct {
 	Dir             string
-	Template        string
 	Goal            string
 	ConfigFile      string
-	Copied          []string
-	Skipped         []string
 	Detected        gates.Detected
 	Models          map[string]config.ModelEntry
 	Acceptance      config.Acceptance
@@ -253,21 +123,14 @@ func commandPtr(value string) *config.Command {
 	return &config.Command{Command: value}
 }
 
-// InitWorkspace creates a starter project, config, goal doc, and schema.
+// InitWorkspace writes Forge control files into an existing or empty project.
 func InitWorkspace(ctx context.Context, options InitOptions) (*InitResult, error) {
 	template := options.Template
 	if template == "" {
-		template = "cli"
+		template = "none"
 	}
-	valid := false
-	for _, name := range Templates {
-		if name == template {
-			valid = true
-			break
-		}
-	}
-	if !valid {
-		return nil, fmt.Errorf("unknown template %q. Choose one of: %s", template, strings.Join(Templates, ", "))
+	if template != "none" {
+		return nil, fmt.Errorf("unknown template %q: Forge only writes control files; omit --template or use \"none\"", template)
 	}
 	dest, err := filepath.Abs(options.Dir)
 	if err != nil {
@@ -280,17 +143,15 @@ func InitWorkspace(ctx context.Context, options InitOptions) (*InitResult, error
 	if util.FileExists(configFile) && !options.Force {
 		return nil, fmt.Errorf("a Forge config already exists at %s. Use --force to overwrite it", configFile)
 	}
-	name := PackageNameFor(dest, "tool")
-	goal := options.Goal
-	if strings.TrimSpace(goal) == "" {
-		goal = DefaultGoal(template, name)
+	goal := strings.TrimSpace(options.Goal)
+	if goal == "" && util.FileExists(configFile) {
+		var existing config.Config
+		if util.ReadJSON(configFile, &existing) == nil {
+			goal = strings.TrimSpace(existing.Goal)
+		}
 	}
-	context := struct{ name, goal, date, version string }{
-		name: name, goal: goal, date: util.NowISO()[:10], version: "0.1.0",
-	}
-	copied, err := copyTemplate(template, dest, options.Force, context)
-	if err != nil {
-		return nil, err
+	if goal == "" {
+		return nil, fmt.Errorf("forge init requires --goal <text>: there is no template goal to fall back on")
 	}
 	detected := gates.DetectProject(dest)
 	commandStrings := gates.DetectedCommandsToJSON(detected)
@@ -299,7 +160,6 @@ func InitWorkspace(ctx context.Context, options InitOptions) (*InitResult, error
 		available = models.ListAvailable(ctx)
 	}
 	picked := models.PickInitial(config.Default(), available)
-	thresholds := DefaultThresholds(template)
 	hasCoverage := commandStrings["coverage"] != ""
 
 	acceptance := config.Acceptance{
@@ -309,9 +169,9 @@ func InitWorkspace(ctx context.Context, options InitOptions) (*InitResult, error
 		Typecheck: commandStrings["typecheck"] != "",
 		Build:     commandStrings["build"] != "",
 		Benchmarks: config.Benchmarks{
-			Required:    len(thresholds) > 0,
+			Required:    false,
 			ResultsFile: "bench/results.json",
-			Thresholds:  thresholds,
+			Thresholds:  nil,
 		},
 		Security: config.Security{
 			Enabled: true, MaxSeverity: "medium", RequireNoSecret: true,
@@ -349,8 +209,7 @@ func InitWorkspace(ctx context.Context, options InitOptions) (*InitResult, error
 		return nil, err
 	}
 	return &InitResult{
-		Dir: dest, Template: template, Goal: goal, ConfigFile: configFile,
-		Copied: copied.Copied, Skipped: copied.Skipped, Detected: detected,
+		Dir: dest, Goal: goal, ConfigFile: configFile, Detected: detected,
 		Models: picked, Acceptance: acceptance, AvailableModels: available,
 	}, nil
 }

@@ -4,11 +4,11 @@
 
 Forge is a reusable, language-agnostic, multi-model coding harness. You give it a goal and a workspace; it plans, designs, implements, tests, benchmarks, security-reviews, independently reviews, and releases in a loop until machine-checked gates and an independent reviewer agree.
 
-This is the Go implementation of Forge. The harness is pure Go with no third-party dependencies. It builds projects in any language: Forge detects project manifests, package managers, and task runners, then runs the project's native install, lint, typecheck, build, test, coverage, and benchmark commands. Explicit `commands` in `forge.config.json` always win; detection fills the gaps. The starter/demo projects it generates remain **JavaScript** on purpose: the Go binary embeds the original JS `cli` and `log-aggregator` templates so you can build and test real Node.js projects while the harness itself runs as a single native binary.
+This is the Go implementation of Forge. The harness is pure Go with no third-party dependencies. It adds control files to a project in any language, detects the project manifests, package managers, and task runners, and runs the project's native install, lint, typecheck, build, test, coverage, and benchmark commands. Explicit `commands` in `forge.config.json` always win; detection fills the gaps. Forge does not scaffold application code or impose a language, framework, or project layout.
 
 ```sh
-forge init linecount --template cli --goal "Build a fast, dependency-free line counter CLI"
-cd linecount
+cd my-project
+forge init . --goal "Add structured logging without changing the public API"
 forge doctor
 forge gates
 forge run
@@ -32,7 +32,6 @@ If a check fails, Forge writes a bounded feedback file, repairs, escalates to th
 - The **`opencode` CLI** on `PATH`, authenticated with at least one model
 - **Git** optional, for repository context, checkpoints, and release tags
 - The **native toolchain of the project you want to build** (Node.js, Go, Rust, Python, Java, .NET, Ruby, PHP, C/C++, Swift, Dart/Flutter, Elixir, Scala, Haskell, Zig, Deno, Lua, R, Julia, or a Makefile/just/Taskfile/Bazel/Nix-driven build)
-- **Node.js 20+** only if you generate and run the bundled JavaScript starter projects
 - No database, daemon, API key manager, or runtime package dependencies
 
 Check the environment:
@@ -40,7 +39,6 @@ Check the environment:
 ```sh
 go version
 opencode --version
-node --version   # only needed for the JS starter projects
 ```
 
 ## Install
@@ -77,10 +75,9 @@ go run ./cmd/forge --help
 ## Quick start
 
 ```sh
-# 1. Create a JavaScript starter workspace from the embedded template
-forge init my-cli --template cli --goal "Build a dependency-free line counter"
-
-cd my-cli
+# 1. Add Forge control files to an existing project or an empty directory
+cd my-project
+forge init . --goal "Add structured logging without changing the public API"
 
 # 2. Check OpenCode, model availability, commands, config, and git
 forge doctor
@@ -99,41 +96,20 @@ forge status
 forge status --report
 ```
 
-### Use an existing project
-
-`--template none` writes Forge's control files into a project you already have, in any language. Forge records the commands it detected in `forge.config.json`, and you can edit or replace them at any time:
-
-```sh
-cd my-existing-project
-forge init . --template none --goal "Add structured logging without changing the public API"
-forge doctor
-forge run --dry-run
-forge gates
-```
-
-If you prefer to keep your own config, create `forge.config.json` manually with only a `goal` and let detection fill the rest. A root `Makefile` target, `just` recipe, `Taskfile` task, or executable `test.sh`/`build.sh` is enough for the script fallback.
-
-`forge init` creates a complete workspace:
+`forge init` never scaffolds application code. It writes:
 
 ```text
-my-cli/
+my-project/
   forge.config.json        goal, acceptance criteria, commands, models, budget
   .forge/forge.schema.json JSON schema for the config
   docs/GOAL.md             machine-readable copy of the goal and acceptance
   AGENTS.md                project profile, resolved commands, and agent rules
   .gitignore               ignores .forge/, dependencies, coverage, and build output
-  src/ test/ bench/        JavaScript starter project (for cli/log-aggregator)
 ```
 
-### Templates
+Forge records the commands it detected in `forge.config.json`; edit or replace them at any time. If the project has no recognizable command, add a root `Makefile` target, `just` recipe, `Taskfile` task, or executable `test.sh`/`build.sh`, or set `commands` manually. A `Makefile`, justfile, Taskfile, or conventional script is enough for the fallback path.
 
-| Template | What it starts with |
-| --- | --- |
-| `cli` (default) | Dependency-free line/word/byte counter with CLI and library tests, coverage, and a throughput benchmark |
-| `log-aggregator` | Streaming NDJSON log aggregator with filtering, percentile summaries, tests, and a benchmark |
-| `none` | Empty workspace with a goal, config, schema, and agent instructions only |
-
-The `cli` and `log-aggregator` starters are JavaScript on purpose; Forge does not convert them to Go. Use `--template none` to add Forge to an existing project in any language. The generated `AGENTS.md` records the detected project profile and the commands the agents should run.
+The generated `AGENTS.md` records the detected project profile and commands. Existing `AGENTS.md` and `.gitignore` files are preserved; Forge only appends `.forge/` when a `.gitignore` already exists.
 
 ### Language and project support
 
@@ -167,16 +143,16 @@ Projects with only source files (no manifest) still get a language profile, but 
 
 | Flag | Meaning |
 | --- | --- |
-| `--goal <text>` | Override the template's default goal |
-| `--template <name>` | `cli`, `log-aggregator`, or `none` |
-| `--force` | Overwrite generated files and an existing `forge.config.json` |
+| `--goal <text>` | Goal statement (required for a new workspace) |
+| `--template <name>` | `none` (default and only built-in; accepted for compatibility) |
+| `--force` | Overwrite generated control files and an existing `forge.config.json` |
 
-`forge init` detects the project type, writes runnable commands into `forge.config.json`, and picks model routing from the models currently available through OpenCode. It is safe to run `forge init . --force` to regenerate control files, but `--force` can overwrite generated starter files.
+`forge init` detects the project type, writes runnable commands into `forge.config.json`, and picks model routing from the models currently available through OpenCode. A new workspace requires `--goal`, since Forge no longer supplies a template goal. It is safe to run `forge init . --force` to regenerate control files; without `--goal`, the existing goal is preserved. `--force` overwrites the config, goal document, and schema, but preserves an existing `AGENTS.md` and only appends `.forge/` to an existing `.gitignore`.
 
 ## Commands
 
 ```text
-forge init [dir]        Create a workspace, goal, config, and starter template
+forge init [dir]        Create a workspace, goal, config, and schema
 forge run [dir]         Run the goal-driven loop until gates + review pass
 forge gates [dir]       Run only the machine gates (no model calls)
 forge status [dir]      Show the latest run and recent history
@@ -237,7 +213,7 @@ A stage runs in a fresh OpenCode session and hands work to the next stage throug
 
 `forge gates` is safe to run without any model calls and is the fastest way to check whether a workspace is releasable. It writes command logs and a summary under `.forge/gates/<timestamp>/`.
 
-Commands come from `forge.config.json` first, then from project detection, then from task runners and scripts. A missing enabled command is a failure, so `forge init` only enables gates for which it found or wrote a command.
+Commands come from `forge.config.json` first, then from project detection, then from task runners and scripts. A missing enabled command is a failure. `forge init` enables lint, typecheck, build, and coverage gates only when detection finds the matching command. Benchmarks remain opt-in through acceptance thresholds. Tests are required by default, so add a test command before running gates on a project that has none.
 
 The deterministic gates are evaluated in this order:
 
@@ -508,15 +484,15 @@ internal/coverage/         coverage parsing from JSON, XML, LCOV, Go profiles, a
 internal/benchmark/        benchmark result parsing and threshold evaluation
 internal/security/         secret scan, scanner parsers, security gate
 internal/reports/          .forge/ state, report contracts, markdown/JSON reports
-internal/templates/        embedded JS starter templates and workspace init
+internal/templates/        workspace init and embedded config schema
 internal/git/              checkpoints, tags, .forge exclusion
 internal/util/             commands, files, JSONL, hashes, formatting
 bench/main.go              self-benchmark for the production event parser
-internal/templates/assets/ embedded JavaScript cli and log-aggregator templates
+internal/templates/assets/ embedded forge.schema.json
 forge.config.json          self-hosting config used to gate Forge itself
 ```
 
-The Go code uses only the standard library. The embedded JavaScript assets are copied byte-for-byte (with `{{name}}`, `{{goal}}`, `{{date}}`, and `{{version}}` substitution) into generated workspaces. `//go:embed all:assets` is used so dotfiles such as `.gitignore` are included.
+The Go code uses only the standard library. Forge embeds the config schema with `//go:embed assets` and writes it into each workspace; it does not embed or scaffold application code.
 
 ## Developing Forge
 
@@ -579,7 +555,7 @@ This consumes OpenCode model time. Free-model usage limits are enforced by the p
 - Command detection is intentionally best-effort. It recognizes common manifests and task runners, but unusual layouts may need explicit `commands`. Configure `acceptance.coverage.file` for a machine-readable summary when your test runner supports it.
 - Forge does not sandbox model commands. Run it in a workspace you are willing to let an agent modify, and use git checkpoints for recovery.
 - Dollar budgets rely on provider-reported cost or configured `pricing`; unpriced models are treated as free.
-- The bundled starter projects are JavaScript by design. Use the `none` template to add Forge to a Go, Rust, Python, or other project; Forge detects its commands, and you can override any of them in `forge.config.json`.
+- Forge does not scaffold application code. `forge init` adds control files to an existing project or an empty directory; use your own tooling to create and maintain the project. The JavaScript starter templates were removed in 1.2.0.
 - Free OpenCode models are subject to provider quotas and can fail independently of the harness.
 
 ## License

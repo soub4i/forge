@@ -24,7 +24,7 @@ import (
 )
 
 // Version is the Forge harness version.
-const Version = "1.1.0"
+const Version = "1.2.0"
 
 // Flags is a small permissive flag parser matching the JS harness.
 type Flags struct {
@@ -181,13 +181,7 @@ func commandInit(flags Flags) (int, error) {
 	}
 	util.Log("")
 	util.Log("Created Forge workspace: " + result.Dir)
-	util.Log("Template: " + result.Template)
 	util.Log("Goal: " + result.Goal)
-	kept := ""
-	if len(result.Skipped) > 0 {
-		kept = fmt.Sprintf(", kept existing: %d", len(result.Skipped))
-	}
-	util.Log(fmt.Sprintf("Files copied: %d%s", len(result.Copied), kept))
 	util.Log("Detected: " + result.Detected.Profile())
 	if len(result.Detected.Manifests) > 0 {
 		manifests := result.Detected.Manifests
@@ -692,7 +686,7 @@ Usage:
   forge <command> [workspace] [flags]
 
 Commands:
-  init [dir]        Create a workspace, goal, config, and starter template
+  init [dir]        Create a workspace, goal, config, and schema
   run [dir]         Run the goal-driven loop until gates + review pass
   gates [dir]       Run only the machine gates (tests, build, bench, security)
   status [dir]      Show the latest run and recent history
@@ -702,9 +696,9 @@ Commands:
   help              Show this help
 
 Init flags:
-  --goal <text>             Goal statement (defaults to the template goal)
-  --template <name>         cli | log-aggregator | none (default: cli)
-  --force                   Overwrite generated files and an existing config
+  --goal <text>             Goal statement (required for a new workspace)
+  --template <name>         none (default and only built-in; accepted for compatibility)
+  --force                   Overwrite generated control files and an existing config
 
 Run flags:
   --max-iterations <n>      0 = unlimited (default from config)
@@ -717,8 +711,9 @@ Run flags:
   --verbose                 More console detail
 
 Examples:
-  forge init logpipe --template log-aggregator --goal "Build a fast NDJSON log aggregator"
-  cd logpipe
+  cd my-project
+  forge init . --goal "Add structured logging without changing the public API"
+  forge doctor
   forge run
   forge run --max-iterations 4 --model implementer=opencode/glm-5.3-flash-free
   forge gates

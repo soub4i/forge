@@ -1,8 +1,0 @@
-node_modules/
-coverage/
-bench/results.json
-.forge/
-dist/
-build/
-*.log
-.DS_Store
