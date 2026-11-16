@@ -226,6 +226,71 @@ noise
 	}
 }
 
+func TestParsePnpmAudit(t *testing.T) {
+	text := `{"advisories":{"1":{"module_name":"lodash","severity":"high","title":"prototype pollution"}}}`
+	findings := ParseOutput("pnpm-audit", text)
+	if len(findings) != 1 || findings[0].Severity != "high" || !strings.Contains(findings[0].Title, "lodash") {
+		t.Fatalf("findings = %+v", findings)
+	}
+	if findings[0].File != "pnpm-lock.yaml" {
+		t.Fatalf("file = %q", findings[0].File)
+	}
+}
+
+func TestParseYarnAudit(t *testing.T) {
+	text := `{"type":"auditAdvisory","data":{"advisory":{"module_name":"minimist","severity":"critical","title":"prototype pollution"}}}`
+	findings := ParseOutput("yarn-audit", text)
+	if len(findings) != 1 || findings[0].Severity != "critical" || !strings.Contains(findings[0].Title, "minimist") {
+		t.Fatalf("findings = %+v", findings)
+	}
+	if findings[0].File != "yarn.lock" {
+		t.Fatalf("file = %q", findings[0].File)
+	}
+}
+
+func TestParseComposerAudit(t *testing.T) {
+	text := `{"advisories":{"vendor/pkg":[{"severity":"medium","title":"unsafe deserialization"}]}}`
+	findings := ParseOutput("composer-audit", text)
+	if len(findings) != 1 || findings[0].Severity != "medium" || !strings.Contains(findings[0].Title, "vendor/pkg") {
+		t.Fatalf("findings = %+v", findings)
+	}
+}
+
+func TestParseBundlerAudit(t *testing.T) {
+	text := `{"results":[{"gem":{"name":"rack"},"advisory":{"severity":"high","title":"header injection"}}]}`
+	findings := ParseOutput("bundler-audit", text)
+	if len(findings) != 1 || findings[0].Severity != "high" || !strings.Contains(findings[0].Title, "rack") {
+		t.Fatalf("findings = %+v", findings)
+	}
+}
+
+func TestParseDotnetVulnerable(t *testing.T) {
+	text := `The following packages have vulnerabilities:
+   [net8.0]:
+   Top-level Package      Requested   Resolved   Latest
+   > Newtonsoft.Json      12.0.1      12.0.1     13.0.3   High
+   > System.Text.Json     7.0.0       7.0.0      8.0.4    Moderate
+`
+	findings := ParseOutput("dotnet-vulnerable", text)
+	if len(findings) != 2 {
+		t.Fatalf("findings = %+v", findings)
+	}
+	if findings[0].Severity != "high" || !strings.Contains(findings[0].Title, "Newtonsoft.Json") {
+		t.Fatalf("first finding = %+v", findings[0])
+	}
+	if findings[1].Severity != "medium" {
+		t.Fatalf("moderate should normalize to medium: %+v", findings[1])
+	}
+}
+
+func TestParseOSV(t *testing.T) {
+	text := `{"results":[{"source":{"path":"package-lock.json"},"packages":[{"package":{"name":"lodash"},"vulnerabilities":[{"id":"GHSA-1","summary":"prototype pollution"}]}]}]}`
+	findings := ParseOutput("osv", text)
+	if len(findings) != 1 || !strings.Contains(findings[0].Title, "GHSA-1") || findings[0].File != "package-lock.json" {
+		t.Fatalf("findings = %+v", findings)
+	}
+}
+
 func TestParseGenericJSON(t *testing.T) {
 	text := `{"issues":[{"severity":"medium","message":"bad pattern","file":"a.js","line":4}]}`
 	findings := ParseOutput("json", text)
@@ -244,14 +309,20 @@ func TestParseTextAndInferFormat(t *testing.T) {
 		t.Fatalf("first finding = %+v", findings[0])
 	}
 	formats := map[string]string{
-		"npm-audit":   "npm",
-		"pip-audit":   "pip-audit",
-		"semgrep":     "semgrep --json",
-		"trivy":       "trivy image",
-		"gitleaks":    "gitleaks detect",
-		"govulncheck": "govulncheck ./...",
-		"json":        "scanner --json",
-		"text":        "plain scanner",
+		"npm-audit":         "npm",
+		"pnpm-audit":        "pnpm audit --json",
+		"yarn-audit":        "yarn audit --json",
+		"composer-audit":    "composer audit --format=json",
+		"bundler-audit":     "bundle-audit check --format json",
+		"dotnet-vulnerable": "dotnet list package --vulnerable",
+		"osv":               "osv-scanner scan source --format json",
+		"pip-audit":         "pip-audit",
+		"semgrep":           "semgrep --json",
+		"trivy":             "trivy image",
+		"gitleaks":          "gitleaks detect",
+		"govulncheck":       "govulncheck ./...",
+		"json":              "scanner --json",
+		"text":              "plain scanner",
 	}
 	for want, haystack := range formats {
 		if got := inferFormat(haystack, haystack); got != want {
@@ -264,6 +335,7 @@ func TestParseTextAndInferFormat(t *testing.T) {
 }
 
 func TestRunScanners(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
 	dir := t.TempDir()
 	runDir := t.TempDir()
 	cfg := config.Default()
@@ -307,13 +379,50 @@ func TestAutoScanners(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(binDir, "npm"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("PATH", binDir)
 	scanners := AutoScanners(dir)
 	if len(scanners) != 1 || scanners[0].Name != "npm-audit" {
 		t.Fatalf("scanners = %+v", scanners)
 	}
 	if len(AutoScanners(t.TempDir())) != 0 {
 		t.Fatal("empty project should not detect scanners")
+	}
+}
+
+func TestAutoScannersForOtherEcosystems(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"pnpm-lock.yaml", "yarn.lock", "composer.lock", "Gemfile.lock"} {
+		writeTempFile(t, dir, name, "{}")
+	}
+	writeTempFile(t, dir, "demo.csproj", `<Project />`)
+	binDir := t.TempDir()
+	for _, name := range []string{"pnpm", "yarn", "composer", "bundle-audit", "dotnet", "osv-scanner"} {
+		if err := os.WriteFile(filepath.Join(binDir, name), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", binDir)
+	found := map[string]bool{}
+	for _, scanner := range AutoScanners(dir) {
+		found[scanner.Name] = true
+	}
+	for _, want := range []string{"pnpm-audit", "yarn-audit", "composer-audit", "bundler-audit", "dotnet-vulnerable", "osv-scanner"} {
+		if !found[want] {
+			t.Errorf("missing scanner %q in %+v", want, found)
+		}
+	}
+
+	cfg := config.Default()
+	cfg.Acceptance.Security.Scanners = []config.Scanner{{Name: "pnpm-audit", Command: "exit 0", Format: "pnpm-audit"}}
+	result := RunScanners(context.Background(), cfg, dir, t.TempDir())
+	seen := 0
+	for _, name := range result.Scanners {
+		if name == "pnpm-audit" {
+			seen++
+		}
+	}
+	if seen != 1 {
+		t.Fatalf("explicit scanner should replace the auto scanner: %+v", result.Scanners)
 	}
 }
 

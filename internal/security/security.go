@@ -292,6 +292,12 @@ func AutoScanners(cwd string) []config.Scanner {
 	if util.FileExists(filepath.Join(cwd, "package-lock.json")) && util.Which("npm") {
 		scanners = append(scanners, config.Scanner{Name: "npm-audit", Command: "npm audit --omit=dev --json", Format: "npm-audit"})
 	}
+	if util.FileExists(filepath.Join(cwd, "pnpm-lock.yaml")) && util.Which("pnpm") {
+		scanners = append(scanners, config.Scanner{Name: "pnpm-audit", Command: "pnpm audit --json", Format: "pnpm-audit"})
+	}
+	if util.FileExists(filepath.Join(cwd, "yarn.lock")) && util.Which("yarn") {
+		scanners = append(scanners, config.Scanner{Name: "yarn-audit", Command: "yarn audit --json", Format: "yarn-audit"})
+	}
 	if (util.FileExists(filepath.Join(cwd, "requirements.txt")) || util.FileExists(filepath.Join(cwd, "pyproject.toml"))) && util.Which("pip-audit") {
 		scanners = append(scanners, config.Scanner{Name: "pip-audit", Command: "pip-audit -f json", Format: "pip-audit"})
 	}
@@ -301,12 +307,79 @@ func AutoScanners(cwd string) []config.Scanner {
 	if util.FileExists(filepath.Join(cwd, "Cargo.lock")) && util.Which("cargo-audit") {
 		scanners = append(scanners, config.Scanner{Name: "cargo-audit", Command: "cargo audit --json", Format: "json"})
 	}
+	if util.FileExists(filepath.Join(cwd, "composer.lock")) && util.Which("composer") {
+		scanners = append(scanners, config.Scanner{Name: "composer-audit", Command: "composer audit --format=json", Format: "composer-audit"})
+	}
+	if util.FileExists(filepath.Join(cwd, "Gemfile.lock")) {
+		switch {
+		case util.Which("bundle-audit"):
+			scanners = append(scanners, config.Scanner{Name: "bundler-audit", Command: "bundle-audit check --format json", Format: "bundler-audit"})
+		case util.Which("bundler-audit"):
+			scanners = append(scanners, config.Scanner{Name: "bundler-audit", Command: "bundler-audit check --format json", Format: "bundler-audit"})
+		}
+	}
+	if dotnetProject(cwd) != "" && util.Which("dotnet") {
+		target := dotnetProject(cwd)
+		command := "dotnet list package --vulnerable --include-transitive"
+		if target != "." {
+			command += " " + securityShellArg(target)
+		}
+		scanners = append(scanners, config.Scanner{Name: "dotnet-vulnerable", Command: command, Format: "dotnet-vulnerable"})
+	}
+	if util.Which("osv-scanner") {
+		scanners = append(scanners, config.Scanner{Name: "osv-scanner", Command: "osv-scanner scan source --format json -r . || osv-scanner --format json -r .", Format: "osv"})
+	}
 	return scanners
 }
 
+func securityShellArg(value string) string {
+	if !strings.ContainsAny(value, " \t\"'$`\\") {
+		return value
+	}
+	if filepath.Separator == '\\' {
+		return `"` + strings.ReplaceAll(value, `"`, `""`) + `"`
+	}
+	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
+}
+
+func dotnetProject(cwd string) string {
+	files, _ := util.WalkFiles(cwd, 3000, 4, 0)
+	var projects []string
+	for _, file := range files {
+		switch strings.ToLower(filepath.Ext(file.Rel)) {
+		case ".sln", ".slnx":
+			return "."
+		case ".csproj", ".fsproj", ".vbproj":
+			projects = append(projects, file.Rel)
+		}
+	}
+	if len(projects) == 0 {
+		return ""
+	}
+	for _, project := range projects {
+		if filepath.Dir(project) == "." {
+			return "."
+		}
+	}
+	return projects[0]
+}
+
 func RunScanners(ctx context.Context, cfg config.Config, cwd, runDir string) ScannerResult {
-	scanners := append([]config.Scanner{}, AutoScanners(cwd)...)
-	scanners = append(scanners, cfg.Acceptance.Security.Scanners...)
+	explicit := cfg.Acceptance.Security.Scanners
+	explicitNames := map[string]bool{}
+	for _, scanner := range explicit {
+		if scanner.Name != "" {
+			explicitNames[scanner.Name] = true
+		}
+	}
+	var scanners []config.Scanner
+	for _, scanner := range AutoScanners(cwd) {
+		if explicitNames[scanner.Name] {
+			continue
+		}
+		scanners = append(scanners, scanner)
+	}
+	scanners = append(scanners, explicit...)
 	result := ScannerResult{OK: true}
 	for _, scanner := range scanners {
 		if scanner.Command == "" {
@@ -346,6 +419,18 @@ func RunScanners(ctx context.Context, cfg config.Config, cwd, runDir string) Sca
 func inferFormat(name, command string) string {
 	haystack := strings.ToLower(name + " " + command)
 	switch {
+	case strings.Contains(haystack, "pnpm"):
+		return "pnpm-audit"
+	case strings.Contains(haystack, "yarn"):
+		return "yarn-audit"
+	case strings.Contains(haystack, "composer"):
+		return "composer-audit"
+	case strings.Contains(haystack, "bundle-audit") || strings.Contains(haystack, "bundler-audit"):
+		return "bundler-audit"
+	case strings.Contains(haystack, "dotnet") && strings.Contains(haystack, "vulnerab"):
+		return "dotnet-vulnerable"
+	case strings.Contains(haystack, "osv-scanner") || strings.Contains(haystack, "osv "):
+		return "osv"
 	case strings.Contains(haystack, "npm"):
 		return "npm-audit"
 	case strings.Contains(haystack, "pip-audit") || strings.Contains(haystack, "pip audit"):
@@ -378,6 +463,18 @@ func ParseOutput(format, text string) []Finding {
 		return parseGitleaks(text)
 	case "govulncheck":
 		return parseGovulncheck(text)
+	case "pnpm-audit":
+		return parsePnpmAudit(text)
+	case "yarn-audit":
+		return parseYarnAudit(text)
+	case "composer-audit":
+		return parseComposerAudit(text)
+	case "bundler-audit":
+		return parseBundlerAudit(text)
+	case "dotnet-vulnerable":
+		return parseDotnetVulnerable(text)
+	case "osv":
+		return parseOSV(text)
 	case "json":
 		return parseGenericJSON(text)
 	case "text":
@@ -501,6 +598,147 @@ func parseGovulncheck(text string) []Finding {
 			Severity: "high", Title: "Go vulnerability: " + stringValue(finding["osv"]),
 			File: "go.mod", Recommendation: "Review the advisory and update dependencies.",
 		}, "govulncheck"))
+	}
+	return out
+}
+
+func parsePnpmAudit(text string) []Finding {
+	value := util.ExtractJSON(text)
+	root, _ := value.(map[string]any)
+	advisories, _ := root["advisories"].(map[string]any)
+	var out []Finding
+	for key, item := range advisories {
+		advisory, _ := item.(map[string]any)
+		name := stringValue(advisory["module_name"])
+		if name == "" {
+			name = key
+		}
+		title := "Vulnerable dependency: " + name
+		if detail := stringValue(advisory["title"]); detail != "" {
+			title += " — " + detail
+		}
+		out = append(out, Normalize(Finding{
+			Severity: stringValue(advisory["severity"]), Title: title, File: "pnpm-lock.yaml",
+			Recommendation: "Update " + name + " to a patched version.",
+		}, "pnpm-audit"))
+	}
+	return out
+}
+
+func parseYarnAudit(text string) []Finding {
+	var out []Finding
+	for _, line := range strings.Split(text, "\n") {
+		value := util.ExtractJSON(line)
+		object, _ := value.(map[string]any)
+		if stringValue(object["type"]) != "auditAdvisory" {
+			continue
+		}
+		data, _ := object["data"].(map[string]any)
+		advisory, _ := data["advisory"].(map[string]any)
+		name := stringValue(advisory["module_name"])
+		title := "Vulnerable dependency: " + name
+		if detail := stringValue(advisory["title"]); detail != "" {
+			title += " — " + detail
+		}
+		out = append(out, Normalize(Finding{
+			Severity: stringValue(advisory["severity"]), Title: title, File: "yarn.lock",
+			Recommendation: "Update " + name + " to a patched version.",
+		}, "yarn-audit"))
+	}
+	return out
+}
+
+func parseComposerAudit(text string) []Finding {
+	value := util.ExtractJSON(text)
+	root, _ := value.(map[string]any)
+	advisories, _ := root["advisories"].(map[string]any)
+	var out []Finding
+	for name, item := range advisories {
+		list, _ := item.([]any)
+		for _, entry := range list {
+			advisory, _ := entry.(map[string]any)
+			title := "PHP advisory: " + name
+			if detail := stringValue(advisory["title"]); detail != "" {
+				title += " — " + detail
+			}
+			out = append(out, Normalize(Finding{
+				Severity: stringValue(advisory["severity"]), Title: title, File: "composer.lock",
+				Recommendation: "Update " + name + " to a patched version.",
+			}, "composer-audit"))
+		}
+	}
+	return out
+}
+
+func parseBundlerAudit(text string) []Finding {
+	value := util.ExtractJSON(text)
+	root, _ := value.(map[string]any)
+	results, _ := root["results"].([]any)
+	var out []Finding
+	for _, item := range results {
+		result, _ := item.(map[string]any)
+		gem, _ := result["gem"].(map[string]any)
+		advisory, _ := result["advisory"].(map[string]any)
+		name := stringValue(gem["name"])
+		title := "Ruby advisory: " + name
+		if detail := stringValue(advisory["title"]); detail != "" {
+			title += " — " + detail
+		}
+		out = append(out, Normalize(Finding{
+			Severity: stringValue(advisory["severity"]), Title: title, File: "Gemfile.lock",
+			Recommendation: "Update " + name + " to a patched version.",
+		}, "bundler-audit"))
+	}
+	return out
+}
+
+var dotnetVulnerabilityPattern = regexp.MustCompile(`(?i)^\s*>\s+(\S+).*?\b(critical|high|moderate|medium|low)\b`)
+
+func parseDotnetVulnerable(text string) []Finding {
+	var out []Finding
+	for _, line := range strings.Split(text, "\n") {
+		match := dotnetVulnerabilityPattern.FindStringSubmatch(line)
+		if len(match) != 3 {
+			continue
+		}
+		out = append(out, Normalize(Finding{
+			Severity: match[2], Title: "Vulnerable NuGet package: " + match[1], File: "packages.lock.json",
+			Recommendation: "Update " + match[1] + " to a patched version.",
+		}, "dotnet-vulnerable"))
+	}
+	return out
+}
+
+func parseOSV(text string) []Finding {
+	value := util.ExtractJSON(text)
+	root, _ := value.(map[string]any)
+	results, _ := root["results"].([]any)
+	var out []Finding
+	for _, item := range results {
+		result, _ := item.(map[string]any)
+		source, _ := result["source"].(map[string]any)
+		file := stringValue(source["path"])
+		packages, _ := result["packages"].([]any)
+		for _, entry := range packages {
+			pkgEntry, _ := entry.(map[string]any)
+			pkg, _ := pkgEntry["package"].(map[string]any)
+			name := stringValue(pkg["name"])
+			vulnerabilities, _ := pkgEntry["vulnerabilities"].([]any)
+			for _, vulnerability := range vulnerabilities {
+				vuln, _ := vulnerability.(map[string]any)
+				title := "OSV: " + stringValue(vuln["id"])
+				if summary := stringValue(vuln["summary"]); summary != "" {
+					title += " — " + summary
+				}
+				if name != "" {
+					title += " (" + name + ")"
+				}
+				out = append(out, Normalize(Finding{
+					Severity: "high", Title: title, File: file,
+					Recommendation: "Review the advisory and update the dependency.",
+				}, "osv-scanner"))
+			}
+		}
 	}
 	return out
 }

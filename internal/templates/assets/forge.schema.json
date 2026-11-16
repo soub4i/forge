@@ -92,6 +92,7 @@
     },
     "commands": {
       "type": "object",
+      "description": "Explicit commands override auto-detection for the matching gate. Omitted or null commands are detected from project manifests and task runners.",
       "additionalProperties": false,
       "properties": {
         "install": { "$ref": "#/definitions/command" },
@@ -246,7 +247,7 @@
         "command": { "type": "string", "minLength": 1 },
         "format": {
           "type": "string",
-          "enum": ["npm-audit", "pip-audit", "semgrep", "trivy", "gitleaks", "govulncheck", "json", "text"]
+          "enum": ["npm-audit", "pnpm-audit", "yarn-audit", "pip-audit", "composer-audit", "bundler-audit", "dotnet-vulnerable", "osv", "semgrep", "trivy", "gitleaks", "govulncheck", "json", "text"]
         },
         "required": { "type": "boolean" },
         "timeoutMs": { "type": "integer", "minimum": 1 }

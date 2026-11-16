@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/soub4i/forge/internal/config"
+	"github.com/soub4i/forge/internal/gates"
 	"github.com/soub4i/forge/internal/util"
 )
 
@@ -30,18 +32,24 @@ type GitFacts struct {
 	BaseCommit string `json:"baseCommit,omitempty"`
 }
 
+type ManifestFact struct {
+	Path    string `json:"path"`
+	Preview string `json:"preview,omitempty"`
+}
+
 type ProjectFacts struct {
-	Files         int            `json:"files"`
-	TopExtensions []string       `json:"topExtensions"`
-	Lockfiles     []string       `json:"lockfiles"`
-	HasTests      bool           `json:"hasTests"`
-	HasBench      bool           `json:"hasBench"`
-	Language      string         `json:"language"`
-	Package       map[string]any `json:"package,omitempty"`
-	GoMod         string         `json:"goMod,omitempty"`
-	Cargo         string         `json:"cargo,omitempty"`
-	Pyproject     string         `json:"pyproject,omitempty"`
-	MakeTargets   []string       `json:"makeTargets,omitempty"`
+	Files          int               `json:"files"`
+	TopExtensions  []string          `json:"topExtensions"`
+	Lockfiles      []string          `json:"lockfiles"`
+	HasTests       bool              `json:"hasTests"`
+	HasBench       bool              `json:"hasBench"`
+	Language       string            `json:"language"`
+	Languages      []string          `json:"languages,omitempty"`
+	PackageManager string            `json:"packageManager,omitempty"`
+	Manifests      []ManifestFact    `json:"manifests,omitempty"`
+	MakeTargets    []string          `json:"makeTargets,omitempty"`
+	TaskRunners    []string          `json:"taskRunners,omitempty"`
+	Commands       map[string]string `json:"detectedCommands,omitempty"`
 }
 
 type Doc struct {
@@ -91,6 +99,19 @@ func GitFactsFor(cwd, baseCommit string) GitFacts {
 	}
 }
 
+var lockfileNames = []string{
+	"package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lockb", "bun.lock",
+	"go.sum", "Cargo.lock", "poetry.lock", "uv.lock", "Pipfile.lock", "composer.lock",
+	"Gemfile.lock", "pubspec.lock", "mix.lock", "Package.resolved", "packages.lock.json",
+	"gradle.lockfile", "deno.lock", "flake.lock", "conan.lock", "vcpkg-lock.json",
+}
+
+var taskRunnerNames = []string{
+	"Makefile", "makefile", "GNUmakefile", "justfile", "Justfile", ".justfile",
+	"Taskfile.yml", "Taskfile.yaml", "deno.json", "deno.jsonc", "flake.nix",
+	"WORKSPACE", "WORKSPACE.bazel", "MODULE.bazel", "BUILD.bazel", "Earthfile",
+}
+
 func ProjectFactsFor(cwd string) ProjectFacts {
 	files, _ := util.WalkFiles(cwd, 5000, 8, 0)
 	counts := map[string]int{}
@@ -123,59 +144,98 @@ func ProjectFactsFor(cwd string) ProjectFacts {
 		top = append(top, item.ext+": "+itoa(item.count))
 	}
 
+	detected := gates.DetectProject(cwd)
 	facts := ProjectFacts{
-		Files:         len(files),
-		TopExtensions: top,
-		HasTests:      anyDir(cwd, []string{"test", "tests", "__tests__", "spec"}),
-		HasBench:      anyDir(cwd, []string{"bench", "benchmark", "benchmarks"}),
+		Files:          len(files),
+		TopExtensions:  top,
+		HasTests:       hasTestFiles(files) || anyDir(cwd, []string{"test", "tests", "__tests__", "spec", "specs"}),
+		HasBench:       hasBenchFiles(files) || anyDir(cwd, []string{"bench", "benches", "benchmark", "benchmarks", "perf", "performance"}),
+		Language:       detected.Language,
+		Languages:      detected.Languages,
+		PackageManager: detected.PackageManager,
+		Commands:       gates.DetectedCommandsToJSON(detected),
 	}
-	for _, name := range []string{"package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lockb", "go.sum", "Cargo.lock", "poetry.lock"} {
+	for _, name := range lockfileNames {
 		if util.FileExists(filepath.Join(cwd, name)) {
 			facts.Lockfiles = append(facts.Lockfiles, name)
 		}
 	}
-	if data := util.ReadText(filepath.Join(cwd, "package.json")); data != "" {
-		var pkg map[string]any
-		if json.Unmarshal([]byte(data), &pkg) == nil {
-			facts.Language = "node"
-			entry := map[string]any{}
-			entry["name"] = pkg["name"]
-			entry["version"] = pkg["version"]
-			entry["scripts"] = pkg["scripts"]
-			if deps, ok := pkg["dependencies"].(map[string]any); ok {
-				entry["dependencies"] = keys(deps)
-			}
-			if deps, ok := pkg["devDependencies"].(map[string]any); ok {
-				entry["devDependencies"] = keys(deps)
-			}
-			facts.Package = entry
+	for index, rel := range detected.Manifests {
+		if index >= 8 {
+			break
 		}
-	} else if data := util.ReadText(filepath.Join(cwd, "go.mod")); data != "" {
-		facts.Language = "go"
-		facts.GoMod = util.Truncate(data, 1200)
-	} else if data := util.ReadText(filepath.Join(cwd, "Cargo.toml")); data != "" {
-		facts.Language = "rust"
-		facts.Cargo = util.Truncate(data, 1200)
-	} else if data := util.ReadText(filepath.Join(cwd, "pyproject.toml")); data != "" {
-		facts.Language = "python"
-		facts.Pyproject = util.Truncate(data, 1800)
-	} else {
-		facts.Language = "unknown"
+		facts.Manifests = append(facts.Manifests, ManifestFact{
+			Path:    rel,
+			Preview: util.Truncate(util.ReadText(filepath.Join(cwd, rel)), 1200),
+		})
 	}
-	if data := util.ReadText(filepath.Join(cwd, "Makefile")); data != "" {
+	for _, name := range taskRunnerNames {
+		if util.FileExists(filepath.Join(cwd, name)) {
+			facts.TaskRunners = append(facts.TaskRunners, name)
+		}
+	}
+	for _, name := range []string{"Makefile", "makefile", "GNUmakefile"} {
+		data := util.ReadText(filepath.Join(cwd, name))
+		if data == "" {
+			continue
+		}
 		for _, line := range strings.Split(data, "\n") {
-			if index := strings.Index(line, ":"); index > 0 {
-				target := line[:index]
-				if !strings.ContainsAny(target, " \t#") {
-					facts.MakeTargets = append(facts.MakeTargets, target)
-				}
+			line = strings.TrimRight(line, "\r")
+			if strings.HasPrefix(line, "\t") || strings.HasPrefix(line, " ") || strings.HasPrefix(line, "#") {
+				continue
+			}
+			index := strings.Index(line, ":")
+			if index <= 0 || index+1 < len(line) && line[index+1] == '=' {
+				continue
+			}
+			target := line[:index]
+			if !strings.ContainsAny(target, " \t=#") {
+				facts.MakeTargets = append(facts.MakeTargets, target)
 			}
 			if len(facts.MakeTargets) >= 30 {
 				break
 			}
 		}
+		break
 	}
 	return facts
+}
+
+func hasTestFiles(files []util.FileInfo) bool {
+	for _, file := range files {
+		rel := strings.ToLower(filepath.ToSlash(file.Rel))
+		base := path.Base(rel)
+		dir := path.Dir(rel)
+		for _, segment := range []string{"test", "tests", "__tests__", "spec", "specs"} {
+			if dir == segment || strings.HasPrefix(dir, segment+"/") || strings.Contains(dir, "/"+segment+"/") || strings.HasSuffix(dir, "/"+segment) {
+				return true
+			}
+		}
+		for _, suffix := range []string{
+			"_test.go", "_test.py", "_test.rb", "_test.rs", "_test.c", "_test.cc", "_test.cpp",
+			"_test.exs", "_spec.rb", "_spec.lua", ".test.js", ".test.jsx", ".test.ts", ".test.tsx",
+			".spec.js", ".spec.jsx", ".spec.ts", ".spec.tsx", "test.java", "tests.java",
+			"test.kt", "test.scala", "test.cs", "tests.cs", "test.swift", "test.php",
+		} {
+			if strings.HasSuffix(base, suffix) {
+				return true
+			}
+		}
+		if strings.HasPrefix(base, "test_") && strings.HasSuffix(base, ".py") {
+			return true
+		}
+	}
+	return false
+}
+
+func hasBenchFiles(files []util.FileInfo) bool {
+	for _, file := range files {
+		base := strings.ToLower(path.Base(filepath.ToSlash(file.Rel)))
+		if strings.Contains(base, "bench") || strings.Contains(base, "perf") {
+			return true
+		}
+	}
+	return false
 }
 
 func BuildSnapshot(cwd string, cfg config.Config, baseCommit string) Snapshot {
@@ -248,15 +308,6 @@ func anyDir(root string, names []string) bool {
 		}
 	}
 	return false
-}
-
-func keys(value map[string]any) []string {
-	out := make([]string, 0, len(value))
-	for key := range value {
-		out = append(out, key)
-	}
-	sort.Strings(out)
-	return out
 }
 
 func formatBytes(size int64) string {

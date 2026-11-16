@@ -503,15 +503,12 @@ func RunHarness(ctx stdctx.Context, options Options) (*Result, error) {
 			return releaseOutcome{OK: false, Reason: "release_incomplete", Missing: missing, Stage: &stageResult}
 		}
 		if cfg.Release.Tag {
-			var pkg map[string]any
-			if util.ReadJSON(filepath.Join(cwd, "package.json"), &pkg) == nil {
-				if version, ok := pkg["version"].(string); ok && version != "" {
-					tagged := gitpkg.Tag(cwd, "v"+version, "Forge release v"+version)
-					if !tagged.OK {
-						util.Warn("could not create git tag: " + tagged.Reason)
-					} else if !tagged.Skipped {
-						util.Log("  git tag: " + tagged.Tag)
-					}
+			if version := gates.ProjectVersion(cwd); version != "" {
+				tagged := gitpkg.Tag(cwd, "v"+version, "Forge release v"+version)
+				if !tagged.OK {
+					util.Warn("could not create git tag: " + tagged.Reason)
+				} else if !tagged.Skipped {
+					util.Log("  git tag: " + tagged.Tag)
 				}
 			}
 		}

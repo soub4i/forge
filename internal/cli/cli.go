@@ -24,7 +24,7 @@ import (
 )
 
 // Version is the Forge harness version.
-const Version = "1.0.0"
+const Version = "1.1.0"
 
 // Flags is a small permissive flag parser matching the JS harness.
 type Flags struct {
@@ -188,11 +188,14 @@ func commandInit(flags Flags) (int, error) {
 		kept = fmt.Sprintf(", kept existing: %d", len(result.Skipped))
 	}
 	util.Log(fmt.Sprintf("Files copied: %d%s", len(result.Copied), kept))
-	manager := ""
-	if result.Detected.PackageManager != "" {
-		manager = " (" + result.Detected.PackageManager + ")"
+	util.Log("Detected: " + result.Detected.Profile())
+	if len(result.Detected.Manifests) > 0 {
+		manifests := result.Detected.Manifests
+		if len(manifests) > 8 {
+			manifests = manifests[:8]
+		}
+		util.Log("Manifests: " + strings.Join(manifests, ", "))
 	}
-	util.Log("Detected: " + result.Detected.Language + manager)
 	var commandParts []string
 	for _, name := range []string{"install", "test", "coverage", "lint", "typecheck", "build", "benchmark"} {
 		if spec := result.Detected.Commands[name]; spec != nil {
@@ -201,6 +204,8 @@ func commandInit(flags Flags) (int, error) {
 	}
 	if len(commandParts) > 0 {
 		util.Log("Commands: " + strings.Join(commandParts, "  "))
+	} else {
+		util.Log("Commands: none detected. Configure `commands` in forge.config.json or add a Makefile, justfile, Taskfile, or test/build script.")
 	}
 	util.Log("")
 	util.Log("Model routing:")
@@ -243,6 +248,7 @@ func printPlan(workspace string, cfg config.Config, configFile string) {
 		label = "(defaults)"
 	}
 	util.Log("Config:    " + label)
+	util.Log("Project:   " + resolved.Detected.Profile())
 	util.Log("")
 	util.Log("Models:")
 	util.Log(models.FormatTable(models.Rows(cfg)))
@@ -536,6 +542,10 @@ func commandDoctor(flags Flags) (int, error) {
 		}
 		resolved := gates.ResolveCommands(loaded.Config, workspace)
 		info["commands"] = gates.CommandsToJSON(resolved)
+		info["detected"] = resolved.Detected
+		if resolved.Detected.Language == "unknown" && len(resolved.Detected.Commands) == 0 {
+			warnings = append(warnings, "No project manifest or task runner detected. Configure commands explicitly for this project.")
+		}
 		if loaded.Config.Acceptance.Tests && resolved.Commands["test"] == nil {
 			issues = append(issues, "Tests are required but no test command is configured or detectable.")
 		}

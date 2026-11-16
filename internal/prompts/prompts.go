@@ -24,10 +24,10 @@ var roles = map[string]string{
 var writeScopes = map[string]string{
 	"architect":   "`docs/ARCHITECTURE.md` and `docs/PLAN.md`. Do not edit production code.",
 	"designer":    "`docs/DESIGN.md` and `docs/PLAN.md`. Do not edit production code; interface sketches in docs are fine.",
-	"implementer": "production source, tests, scripts, and package metadata. Do not edit `docs/ARCHITECTURE.md` or `docs/DESIGN.md`, and never edit `forge.config.json` to change acceptance, commands, models, or budget.",
-	"tester":      "tests, test fixtures, and test scripts; minimal production fixes only when needed for testability. Never weaken or delete existing tests.",
+	"implementer": "production source, tests, build files, manifests, and project metadata in the repository's native ecosystem. Do not edit `docs/ARCHITECTURE.md` or `docs/DESIGN.md`, and never edit `forge.config.json` to change acceptance, commands, models, or budget.",
+	"tester":      "tests, test fixtures, and test entry points; minimal production fixes only when needed for testability. Never weaken or delete existing tests.",
 	"fixer":       "source, tests, and build/benchmark scripts needed to fix the reported failures. Never weaken tests, benchmarks, scanners, or acceptance criteria.",
-	"benchmarker": "`bench/`, benchmark scripts, and the benchmark command in package metadata. Do not change acceptance thresholds or make the workload artificially cheap.",
+	"benchmarker": "the project's benchmark directory and scripts (for example `bench/` when it exists) and the benchmark entry point in build metadata. Do not change acceptance thresholds or make the workload artificially cheap.",
 	"security":    "`docs/SECURITY.md` and `.forge/security.json` only. Treat source code as read-only.",
 	"reviewer":    "`docs/REVIEW.md` and `.forge/review.json` only. Treat source code as read-only.",
 	"release":     "`README.md`, `CHANGELOG.md`, `docs/RELEASE.md`, and release metadata. Do not change application logic or tests.",
@@ -74,14 +74,15 @@ func commonHeader(stage string, ctx Context) string {
 
 1. Work directly in the repository with your tools. Do not ask questions, wait for confirmation, or only describe what you would do.
 2. Never edit ` + "`forge.config.json`" + ` (or any harness config) to change acceptance criteria, commands, model routing, or budget. Never weaken, skip, or delete tests, benchmarks, security checks, or coverage requirements to make a gate pass.
-3. Prefer the standard library and a minimal dependency set. Do not add a dependency unless it is clearly justified by the goal.
-4. Never commit secrets, credentials, tokens, private keys, or machine-specific absolute paths. Tests and benchmarks must run offline and deterministically.
-5. Validate untrusted input, bound resource usage, avoid shell injection, path traversal, unsafe deserialization, and unbounded memory/CPU work.
-6. Keep the public CLI/API small, documented, and hard to misuse. Preserve backward compatibility unless the goal says otherwise.
-7. Run the relevant configured commands before finishing. Leave the repository in a working state.
-8. Stay inside your stage's write scope. Do not do another stage's job.
-9. Record important trade-offs in the required docs. Do not rewrite unrelated code.
-10. End with a concise summary (10–15 lines): what you changed, commands run and results, remaining risks.
+3. Use the repository's existing language, build system, package manager, and conventions. Do not migrate to a different ecosystem unless the goal explicitly requires it.
+4. Prefer the project's native toolchain and a minimal dependency set. Do not add a dependency unless it is clearly justified by the goal.
+5. Never commit secrets, credentials, tokens, private keys, or machine-specific absolute paths. Tests and benchmarks must run offline and deterministically.
+6. Validate untrusted input, bound resource usage, avoid shell injection, path traversal, unsafe deserialization, and unbounded memory/CPU work.
+7. Keep the public interface (CLI, API, library, or service) small, documented, and hard to misuse. Preserve backward compatibility unless the goal says otherwise.
+8. Run the relevant configured commands before finishing. Leave the repository in a working state.
+9. Stay inside your stage's write scope. Do not do another stage's job.
+10. Record important trade-offs in the required docs. Do not rewrite unrelated code.
+11. End with a concise summary (10–15 lines): what you changed, commands run and results, remaining risks.
 
 ## Repository snapshot
 
@@ -158,37 +159,37 @@ func stageAssignment(stage string, ctx Context) string {
 	case "architect":
 		return `Produce the technical architecture and an execution plan. Do not implement production code.
 
-- Write ` + "`docs/ARCHITECTURE.md`" + ` with: goal and users; success metrics mapped to acceptance criteria; system overview and data flow; components and responsibilities; CLI/API surface; storage and data model; failure modes; security and privacy model; observability; testing strategy; benchmark strategy; milestones; risks and open questions.
+- Write ` + "`docs/ARCHITECTURE.md`" + ` with: goal and users; success metrics mapped to acceptance criteria; system overview and data flow; components and responsibilities; public interface (CLI, API, library, or service); storage and data model; failure modes; security and privacy model; observability; testing strategy; benchmark strategy; milestones; risks and open questions.
 - Write ` + "`docs/PLAN.md`" + ` with ordered, checkable tasks. Each task should name the files it touches, the verification command, and which acceptance criterion it satisfies.
-- Choose boring, portable technology. Prefer zero runtime dependencies and a single-process design unless the goal demands more.
-- Keep the design implementable in small vertical slices. The first slice must produce a working, testable CLI or service.
+- Choose boring, portable technology that fits the repository's existing ecosystem. Prefer a minimal dependency set and a single-process design unless the goal demands more.
+- Keep the design implementable in small vertical slices. The first slice must produce a working, testable interface or service.
 - If architecture docs already exist, revise them instead of restarting.`
 	case "designer":
 		return `Turn the architecture into an implementation-ready design. Do not implement production code.
 
-- Write ` + "`docs/DESIGN.md`" + ` with: exact CLI commands/flags/examples and exit codes; input/output schemas; module layout and responsibilities; core algorithms and complexity; error handling and user-facing messages; configuration and environment variables; test plan (unit, integration, malformed input, edge cases); benchmark workload, metrics, and thresholds; threat model (assets, trust boundaries, abuse cases); release plan.
+- Write ` + "`docs/DESIGN.md`" + ` with: exact user-facing commands/flags/examples and exit codes where applicable; input/output schemas; module layout and responsibilities; core algorithms and complexity; error handling and user-facing messages; configuration and environment variables; test plan (unit, integration, malformed input, edge cases); benchmark workload, metrics, and thresholds; threat model (assets, trust boundaries, abuse cases); release plan.
 - Update ` + "`docs/PLAN.md`" + ` with concrete, ordered tasks that a single implementer can execute.
 - Make decisions where the goal is ambiguous. Record the decision and the alternative you rejected.
-- Design for testability: pure functions for parsing/aggregation/formatting, a thin CLI shell, injectable IO where useful.`
+- Design for testability in the project's native style: pure functions for parsing/aggregation/formatting, a thin entry point, and injectable IO where the ecosystem supports it.`
 	case "implementer":
 		return `Implement the next vertical slice, directly in the repository.
 
 - Read the architecture, design, plan, and any previous feedback first.
 - Implement the highest-value unfinished tasks. Prefer a working end-to-end slice over broad scaffolding.
-- Add or update unit tests for every new behavior, including malformed input and error paths.
+- Add or update tests for every new behavior using the repository's native test framework, including malformed input and error paths.
 - Run the configured test/lint/build commands and fix failures before finishing.
-- If the test or benchmark command is missing, add a standard script (for example in ` + "`package.json`" + `) so the harness can detect it.
+- If the test or benchmark command is missing, add the project's conventional entry point (for example a Makefile target, package script, Gradle task, or build-file target) so the harness can detect it. Do not edit ` + "`forge.config.json`" + ` to change harness settings.
 - If previous feedback exists, fix those root causes before adding new scope.
 - Keep the diff focused and leave the repository working.`
 	case "tester":
 		return `Harden the implementation with meaningful tests.
 
-- Inspect the code and docs, then add unit and integration tests for: happy path, edge cases, malformed input, empty input, large input, error handling, and CLI behavior (help, bad flags, exit codes).
+- Inspect the code and docs, then add unit and integration tests for: happy path, edge cases, malformed input, empty input, large input, error handling, and interface behavior (CLI flags/exit codes, API errors, or library edge cases).
 - Tests must be deterministic and offline. Use fixed fixtures; do not depend on wall-clock time, randomness, network, or machine speed.
 - Run the configured test and coverage commands. Fix test failures.
 - Prefer test-only changes. Make a minimal production fix only when the code is genuinely untestable or broken.
 - Do not delete, skip, or weaken existing tests, and do not lower coverage requirements.
-- If no test command exists, add one.`
+- If no test command exists, add one using the project's native test framework or a Makefile/task-runner target.`
 	case "fixer":
 		return `The machine-checked gates failed. Fix the root causes with the smallest correct change.
 
@@ -199,17 +200,17 @@ func stageAssignment(stage string, ctx Context) string {
 - Never weaken tests, benchmarks, security scanners, coverage, or acceptance criteria. Do not edit harness config to hide a failure.
 - If a gate is genuinely misconfigured, explain it clearly in your final message instead of changing the gate.`
 	case "benchmarker":
-		return fmt.Sprintf(`Create or validate a realistic, reproducible benchmark for this tool.
+		return fmt.Sprintf(`Create or validate a realistic, reproducible benchmark for this project.
 
-- Build a workload representative of the goal (for example: NDJSON ingest throughput for a log aggregator, startup and command latency for a CLI, memory per 100k records).
+- Build a workload representative of the goal (for example: request throughput for a service, startup latency for a CLI, allocation rate for a library, or processing time for a batch job).
 - Include warmup, multiple measured iterations, and report stable metrics as JSON to `+"`%s`"+`.
-- Add or fix the benchmark command/script if it is missing.
+- Add or fix the benchmark command/script in the project's native build system if it is missing.
 - Run the benchmark and report the metrics against the configured thresholds.
 - Do not change thresholds or acceptance config, and do not make the workload artificially cheap. A benchmark that does not exercise the real code path is a failure.`, ctx.Config.Acceptance.Benchmarks.ResultsFile)
 	case "security":
 		return `Perform an adversarial security review. Treat source code as read-only.
 
-Focus on: untrusted input parsing; shell/command injection; path traversal and symlink attacks; unsafe deserialization; ReDoS and algorithmic complexity; unbounded memory/CPU/disk use; file permission and temp-file handling; secret handling and logging; dependency and supply-chain risk; CLI argument confusion; injection into logs/terminals; privilege boundaries.
+Focus on: untrusted input parsing; shell/command injection; path traversal and symlink attacks; unsafe deserialization; ReDoS and algorithmic complexity; unbounded memory/CPU/disk use; memory-safety or concurrency hazards in the project's language; file permission and temp-file handling; secret handling and logging; dependency and supply-chain risk; interface argument confusion; injection into logs/terminals; privilege boundaries.
 
 Incorporate the deterministic scanner findings above, but do not simply repeat them. Verify whether each is reachable and exploitable, and look for issues scanners miss.
 
@@ -236,7 +237,7 @@ Only report real, actionable issues. Do not invent generic findings. If there ar
 	case "reviewer":
 		return `Independently review the repository against the goal and acceptance criteria. You did not write this code. Treat source code as read-only.
 
-Check: correctness against the goal; edge cases and failure handling; CLI/API ergonomics; test quality (tests must assert behavior, not tautologies); benchmark realism (not weakened or measuring a stub); security and resource bounds; documentation accuracy; release readiness.
+Check: correctness against the goal; edge cases and failure handling; public-interface ergonomics; test quality (tests must assert behavior, not tautologies); benchmark realism (not weakened or measuring a stub); security and resource bounds; documentation accuracy; release readiness.
 
 Run read-only commands if useful. Do not approve merely to end the loop. Approve only when every acceptance criterion is met and there are no blocking issues.
 
@@ -265,7 +266,7 @@ Set ` + "`design_change_needed: true`" + ` only when the architecture itself is 
 	case "release":
 		return `All machine gates and the independent review passed. Prepare the release artifacts. Do not publish, push, or create a remote release.
 
-- ` + "`README.md`" + `: what it is, install/build, quickstart, command/flag reference, examples, exit codes, configuration, performance numbers, security notes, limitations.
+- ` + "`README.md`" + `: what it is, install/build instructions for the project's ecosystem, quickstart, interface reference, examples, configuration, performance numbers, security notes, limitations.
 - ` + "`CHANGELOG.md`" + `: version, date, highlights, verification evidence (tests, coverage, benchmark, security, review).
 - ` + "`docs/RELEASE.md`" + `: release checklist, artifacts, known limitations, rollback instructions, and the exact commands a user runs to verify the release.
 - Keep the documentation accurate to the code. Do not invent features or benchmarks.
@@ -286,7 +287,7 @@ func outputContract(stage string, ctx Context) string {
 	case "architect":
 		return "Write both required docs, then reply with: architecture summary, ordered milestones, top 3 risks."
 	case "designer":
-		return "Write the design and updated plan, then reply with: CLI surface, module layout, test/benchmark plan, top risk."
+		return "Write the design and updated plan, then reply with: interface surface, module layout, test/benchmark plan, top risk."
 	case "implementer":
 		return "Leave the repository working. Reply with: files changed, commands run and results, remaining plan tasks, risks."
 	case "tester":

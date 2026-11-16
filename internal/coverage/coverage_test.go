@@ -9,6 +9,126 @@ import (
 	"github.com/soub4i/forge/internal/config"
 )
 
+func writeCoverageFile(t *testing.T, dir, rel, content string) {
+	t.Helper()
+	full := filepath.Join(dir, rel)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestExtractCoverageFileFormats(t *testing.T) {
+	cases := []struct {
+		name    string
+		rel     string
+		content string
+		want    float64
+	}{
+		{
+			name:    "cobertura",
+			rel:     "reports/coverage.xml",
+			content: `<?xml version="1.0"?><coverage line-rate="0.875" branch-rate="0.5"><packages/></coverage>`,
+			want:    87.5,
+		},
+		{
+			name:    "cobertura zero",
+			rel:     "coverage/coverage.cobertura.xml",
+			content: `<?xml version="1.0"?><coverage line-rate="0" branch-rate="0"><packages/></coverage>`,
+			want:    0,
+		},
+		{
+			name:    "jacoco",
+			rel:     "target/site/jacoco/jacoco.xml",
+			content: `<?xml version="1.0"?><report name="demo"><counter type="INSTRUCTION" missed="10" covered="90"/><counter type="LINE" missed="25" covered="75"/></report>`,
+			want:    75,
+		},
+		{
+			name:    "lcov",
+			rel:     "coverage/lcov.info",
+			content: "TN:\nSF:src/a.js\nLF:10\nLH:5\nend_of_record\nSF:src/b.js\nLF:10\nLH:5\nend_of_record\n",
+			want:    50,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeCoverageFile(t, dir, tc.rel, tc.content)
+			percent, source := Extract(dir, config.Default(), "")
+			if percent == nil {
+				t.Fatalf("coverage was not parsed from %s", tc.rel)
+			}
+			if diff := *percent - tc.want; diff > 0.001 || diff < -0.001 {
+				t.Fatalf("coverage = %v, want %v", *percent, tc.want)
+			}
+			if source != tc.rel {
+				t.Fatalf("source = %q, want %q", source, tc.rel)
+			}
+		})
+	}
+}
+
+func TestExtractGoProfile(t *testing.T) {
+	dir := t.TempDir()
+	writeCoverageFile(t, dir, "coverage.out", `mode: set
+example.com/demo/a.go:1.1,2.1 2 1
+example.com/demo/a.go:3.1,4.1 2 0
+example.com/demo/b.go:1.1,2.1 1 3
+`)
+	percent, source := Extract(dir, config.Default(), "")
+	if percent == nil || source != "coverage.out" {
+		t.Fatalf("percent = %v source = %q", percent, source)
+	}
+	want := 60.0
+	if diff := *percent - want; diff > 0.001 || diff < -0.001 {
+		t.Fatalf("coverage = %v, want %v", *percent, want)
+	}
+}
+
+func TestExtractCoverageTextFormats(t *testing.T) {
+	cases := map[string]float64{
+		"PHPUnit":   72.5,
+		"SimpleCov": 87.5,
+		"Elixir":    91.2,
+		"tarpaulin": 50,
+	}
+	outputs := map[string]string{
+		"PHPUnit":   "Code Coverage Report:\n Summary:\n  Lines:   72.50% (29/40)\n",
+		"SimpleCov": "Line Coverage: 87.5% (35 / 40)\n",
+		"Elixir":    "Coverage report:\nTotal            91.2%\n",
+		"tarpaulin": "|| 50.00% covered\n",
+	}
+	for name, stdout := range outputs {
+		t.Run(name, func(t *testing.T) {
+			percent, source := Extract(t.TempDir(), config.Default(), stdout)
+			if percent == nil || source != "stdout" {
+				t.Fatalf("percent = %v source = %q", percent, source)
+			}
+			if diff := *percent - cases[name]; diff > 0.001 || diff < -0.001 {
+				t.Fatalf("coverage = %v, want %v", *percent, cases[name])
+			}
+		})
+	}
+}
+
+func TestExtractConfiguredCoverageFileWins(t *testing.T) {
+	dir := t.TempDir()
+	writeCoverageFile(t, dir, "coverage.xml", `<?xml version="1.0"?><coverage line-rate="0.50"/>`)
+	writeCoverageFile(t, dir, "custom/report.xml", `<?xml version="1.0"?><coverage line-rate="0.91"/>`)
+	cfg := config.Default()
+	file := "custom/report.xml"
+	cfg.Acceptance.Coverage.File = &file
+	percent, source := Extract(dir, cfg, "")
+	if percent == nil || source != file {
+		t.Fatalf("percent = %v source = %q", percent, source)
+	}
+	if diff := *percent - 91.0; diff > 0.001 || diff < -0.001 {
+		t.Fatalf("coverage = %v, want 91", *percent)
+	}
+}
+
 func TestExtractFromJSON(t *testing.T) {
 	value := map[string]any{
 		"total": map[string]any{

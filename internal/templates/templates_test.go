@@ -63,6 +63,41 @@ func TestInitWorkspaceCLI(t *testing.T) {
 	if cfg.Schema != "./.forge/forge.schema.json" {
 		t.Fatalf("schema = %q", cfg.Schema)
 	}
+	instructions := util.ReadText(filepath.Join(dir, "AGENTS.md"))
+	if !strings.Contains(instructions, "Node.js >= 20") {
+		t.Errorf("starter AGENTS.md lost its JavaScript-specific guidance:\n%s", instructions)
+	}
+}
+
+func TestInitWorkspaceWritesDetectedProfile(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "existing-go")
+	if err := util.EnsureDir(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := util.WriteText(filepath.Join(dir, "go.mod"), "module demo\n\ngo 1.23\n"); err != nil {
+		t.Fatal(err)
+	}
+	result, err := InitWorkspace(context.Background(), InitOptions{
+		Dir: dir, Template: "none", Goal: "Improve the Go service", Available: []string{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Detected.Language != "go" || result.Detected.Commands["test"].Command != "go test ./..." {
+		t.Fatalf("detected = %+v", result.Detected)
+	}
+	if result.Detected.Profile() != "go" {
+		t.Fatalf("profile = %q", result.Detected.Profile())
+	}
+	instructions := util.ReadText(filepath.Join(dir, "AGENTS.md"))
+	for _, want := range []string{"## Project profile", "go", "- test: `go test ./...`", "repository's existing language"} {
+		if !strings.Contains(instructions, want) {
+			t.Errorf("AGENTS.md is missing %q:\n%s", want, instructions)
+		}
+	}
+	if strings.Contains(instructions, "node") {
+		t.Fatalf("AGENTS.md inherited Node.js instructions:\n%s", instructions)
+	}
 }
 
 func TestInitWorkspaceLogAggregator(t *testing.T) {
@@ -94,6 +129,18 @@ func TestInitWorkspaceNone(t *testing.T) {
 	}
 	if !util.FileExists(filepath.Join(dir, "forge.config.json")) {
 		t.Fatal("config was not written")
+	}
+	gitignore := util.ReadText(filepath.Join(dir, ".gitignore"))
+	for _, want := range []string{".venv/", "target/", "__pycache__/", "vendor/"} {
+		if !strings.Contains(gitignore, want) {
+			t.Errorf(".gitignore is missing %q", want)
+		}
+	}
+	instructions := util.ReadText(filepath.Join(dir, "AGENTS.md"))
+	for _, want := range []string{"Project profile", "not detected", "project's standard build/test entry points"} {
+		if !strings.Contains(instructions, want) {
+			t.Errorf("AGENTS.md is missing %q:\n%s", want, instructions)
+		}
 	}
 }
 

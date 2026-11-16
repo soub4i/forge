@@ -36,7 +36,7 @@ func floatPtr(value float64) *float64 { return &value }
 func TestBuildEveryStage(t *testing.T) {
 	stages := map[string][]string{
 		"architect":   {"Architect stage", "docs/ARCHITECTURE.md", "docs/PLAN.md", "architecture summary"},
-		"designer":    {"Designer stage", "docs/DESIGN.md", "CLI surface"},
+		"designer":    {"Designer stage", "docs/DESIGN.md", "interface surface"},
 		"implementer": {"Implementer stage", "Implement the next vertical slice", "files changed"},
 		"tester":      {"Tester stage", "Harden the implementation", "coverage"},
 		"fixer":       {"Fixer stage", "machine-checked gates failed", "root cause"},
@@ -68,6 +68,27 @@ func TestBuildEveryStage(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestPromptsAreEcosystemNeutral(t *testing.T) {
+	prompt := Build("implementer", promptContext())
+	for _, want := range []string{
+		"repository's existing language, build system, package manager, and conventions",
+		"project's conventional entry point",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("implementer prompt is missing %q", want)
+		}
+	}
+	for _, unwanted := range []string{"npm install", "Node.js project"} {
+		if strings.Contains(prompt, unwanted) {
+			t.Errorf("implementer prompt still assumes a Node.js project: %q", unwanted)
+		}
+	}
+	designer := Build("designer", promptContext())
+	if strings.Contains(designer, "CLI commands/flags") {
+		t.Fatal("designer prompt should not assume a CLI-only project")
 	}
 }
 

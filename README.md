@@ -2,9 +2,9 @@
 
 [![CI](https://github.com/soub4i/forge/actions/workflows/ci.yml/badge.svg)](https://github.com/soub4i/forge/actions/workflows/ci.yml)
 
-Forge is a reusable, multi-model coding harness. You give it a goal and a workspace; it plans, designs, implements, tests, benchmarks, security-reviews, independently reviews, and releases in a loop until machine-checked gates and an independent reviewer agree.
+Forge is a reusable, language-agnostic, multi-model coding harness. You give it a goal and a workspace; it plans, designs, implements, tests, benchmarks, security-reviews, independently reviews, and releases in a loop until machine-checked gates and an independent reviewer agree.
 
-This is the Go implementation of Forge. The harness is pure Go with no third-party dependencies. The starter/demo projects it generates remain **JavaScript** on purpose: the Go binary embeds the original JS `cli` and `log-aggregator` templates so you can build and test real Node.js projects while the harness itself runs as a single native binary.
+This is the Go implementation of Forge. The harness is pure Go with no third-party dependencies. It builds projects in any language: Forge detects project manifests, package managers, and task runners, then runs the project's native install, lint, typecheck, build, test, coverage, and benchmark commands. Explicit `commands` in `forge.config.json` always win; detection fills the gaps. The starter/demo projects it generates remain **JavaScript** on purpose: the Go binary embeds the original JS `cli` and `log-aggregator` templates so you can build and test real Node.js projects while the harness itself runs as a single native binary.
 
 ```sh
 forge init linecount --template cli --goal "Build a fast, dependency-free line counter CLI"
@@ -31,6 +31,7 @@ If a check fails, Forge writes a bounded feedback file, repairs, escalates to th
 - **Go 1.23+** to build the harness (the module targets `go 1.23`)
 - The **`opencode` CLI** on `PATH`, authenticated with at least one model
 - **Git** optional, for repository context, checkpoints, and release tags
+- The **native toolchain of the project you want to build** (Node.js, Go, Rust, Python, Java, .NET, Ruby, PHP, C/C++, Swift, Dart/Flutter, Elixir, Scala, Haskell, Zig, Deno, Lua, R, Julia, or a Makefile/just/Taskfile/Bazel/Nix-driven build)
 - **Node.js 20+** only if you generate and run the bundled JavaScript starter projects
 - No database, daemon, API key manager, or runtime package dependencies
 
@@ -98,6 +99,20 @@ forge status
 forge status --report
 ```
 
+### Use an existing project
+
+`--template none` writes Forge's control files into a project you already have, in any language. Forge records the commands it detected in `forge.config.json`, and you can edit or replace them at any time:
+
+```sh
+cd my-existing-project
+forge init . --template none --goal "Add structured logging without changing the public API"
+forge doctor
+forge run --dry-run
+forge gates
+```
+
+If you prefer to keep your own config, create `forge.config.json` manually with only a `goal` and let detection fill the rest. A root `Makefile` target, `just` recipe, `Taskfile` task, or executable `test.sh`/`build.sh` is enough for the script fallback.
+
 `forge init` creates a complete workspace:
 
 ```text
@@ -105,8 +120,8 @@ my-cli/
   forge.config.json        goal, acceptance criteria, commands, models, budget
   .forge/forge.schema.json JSON schema for the config
   docs/GOAL.md             machine-readable copy of the goal and acceptance
-  AGENTS.md                instructions for agents working in the workspace
-  .gitignore               ignores .forge/, node_modules/, coverage, and build output
+  AGENTS.md                project profile, resolved commands, and agent rules
+  .gitignore               ignores .forge/, dependencies, coverage, and build output
   src/ test/ bench/        JavaScript starter project (for cli/log-aggregator)
 ```
 
@@ -118,7 +133,35 @@ my-cli/
 | `log-aggregator` | Streaming NDJSON log aggregator with filtering, percentile summaries, tests, and a benchmark |
 | `none` | Empty workspace with a goal, config, schema, and agent instructions only |
 
-For a Node.js project, the generated workspace stays JavaScript. The Go binary does not convert it to Go. Use `--template none` if you want to bring your own project or language.
+The `cli` and `log-aggregator` starters are JavaScript on purpose; Forge does not convert them to Go. Use `--template none` to add Forge to an existing project in any language. The generated `AGENTS.md` records the detected project profile and the commands the agents should run.
+
+### Language and project support
+
+Detection is best-effort and additive. Forge scans manifests and source files, chooses a primary ecosystem from source-file counts when several are present, and fills missing gates from other ecosystems, task runners, and scripts. Explicit `commands` remain authoritative.
+
+| Project | Detected from |
+| --- | --- |
+| Node.js / Bun / Deno | `package.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lockb`, `deno.json` |
+| Go | `go.mod` (workspace `go.work` files are recorded as manifests) |
+| Rust | `Cargo.toml` |
+| Python | `pyproject.toml`, `requirements.txt`, `setup.py`, `Pipfile`, `uv.lock`, `poetry.lock`, `tox.ini` |
+| Java / Kotlin | `pom.xml`, `build.gradle`, `build.gradle.kts`, Maven/Gradle wrappers |
+| .NET | `*.sln`, `*.csproj`, `*.fsproj`, `*.vbproj`, `global.json` |
+| Ruby | `Gemfile`, `Rakefile`, `*.gemspec` |
+| PHP | `composer.json`, PHPUnit/PHPStan/Psalm/phpcs configs |
+| C / C++ | `CMakeLists.txt`, `meson.build`, `configure.ac`, `vcpkg.json` |
+| Swift | `Package.swift` |
+| Dart / Flutter | `pubspec.yaml` |
+| Elixir | `mix.exs` |
+| Scala | `build.sbt` |
+| Haskell | `*.cabal`, `stack.yaml`, `cabal.project` |
+| Zig | `build.zig` |
+| Lua | `*.rockspec`, `.busted`, `.luacheckrc` |
+| R | `DESCRIPTION` |
+| Julia | `Project.toml` |
+| Task runners / scripts | `Makefile`, `justfile`, `Taskfile.yml`, Bazel, Nix, executable `test.sh`/`build.sh`/etc. |
+
+Projects with only source files (no manifest) still get a language profile, but Forge does not invent commands for them. Add a task runner, a conventional script, or explicit `commands`.
 
 ### Init flags
 
@@ -194,6 +237,8 @@ A stage runs in a fresh OpenCode session and hands work to the next stage throug
 
 `forge gates` is safe to run without any model calls and is the fastest way to check whether a workspace is releasable. It writes command logs and a summary under `.forge/gates/<timestamp>/`.
 
+Commands come from `forge.config.json` first, then from project detection, then from task runners and scripts. A missing enabled command is a failure, so `forge init` only enables gates for which it found or wrote a command.
+
 The deterministic gates are evaluated in this order:
 
 1. **Install** — when `commands.install` is configured or detected.
@@ -207,20 +252,22 @@ The deterministic gates are evaluated in this order:
 9. **External scanners** — when configured or auto-detected.
 10. **Independent review** — after the reviewer stage in a full run.
 
-A missing enabled command is a failure. A command can be marked `optional: true` to turn a non-zero exit into a warning instead of a blocker.
+A command can be marked `optional: true` to turn a non-zero exit into a warning instead of a blocker.
 
 ### Coverage
 
 Coverage is parsed from, in order:
 
 - the configured `acceptance.coverage.file`
-- `coverage/coverage-summary.json`
-- `coverage.json`
-- `coverage/coverage-final.json`
+- `coverage/coverage-summary.json`, `coverage.json`, or `coverage/coverage-final.json`
+- `coverage/lcov.info` or `lcov.info`
+- `coverage.xml`, `coverage/cobertura-coverage.xml`, or `coverage/coverage.cobertura.xml`
+- `target/site/jacoco/jacoco.xml`
+- other discovered `coverage.xml`, `jacoco.xml`, `lcov.info`, and Cobertura files
 - the coverage command's stdout
-- `coverage.out`
+- `coverage.out` (Go profiles are computed from statement counts)
 
-For Go projects, the extractor prefers the `total: (statements) X%` line, so a multi-package `go test -cover` output is parsed correctly even when individual packages report `0.0%`.
+Supported formats include Istanbul JSON, Python coverage JSON, Cobertura XML, JaCoCo XML, LCOV, and text summaries from tools such as `go tool cover`, `nyc`, PHPUnit, SimpleCov, `mix test --cover`, JaCoCo, and tarpaulin. For Go, the extractor prefers the `total: (statements) X%` line, so multi-package output is parsed correctly even when individual packages report `0.0%`.
 
 ### Benchmarks
 
@@ -250,12 +297,16 @@ The marker is intentionally line-scoped. Prefer it over disabling a whole file.
 
 External scanners are auto-detected when the relevant tool and project marker exist:
 
-- `npm audit` for npm projects
+- `npm audit`, `pnpm audit`, or `yarn audit` for Node.js projects
 - `pip-audit` for Python projects
 - `govulncheck` for Go projects
 - `cargo audit` for Rust projects
+- `composer audit` for PHP projects
+- `bundle-audit` for Ruby projects
+- `dotnet list package --vulnerable` for .NET projects
+- `osv-scanner` when it is installed
 
-You can also configure scanners explicitly. Supported output formats are `npm-audit`, `pip-audit`, `semgrep`, `trivy`, `gitleaks`, `govulncheck`, `json`, and `text`.
+You can also configure scanners explicitly. An explicit scanner replaces an auto-detected scanner with the same name. Supported output formats are `npm-audit`, `pnpm-audit`, `yarn-audit`, `pip-audit`, `composer-audit`, `bundler-audit`, `dotnet-vulnerable`, `osv`, `semgrep`, `trivy`, `gitleaks`, `govulncheck`, `json`, and `text`.
 
 ## Model routing
 
@@ -367,13 +418,14 @@ A complete example:
 Notes:
 
 - `budget.maxUsd`, `maxMinutes`, `maxIterations`, and `maxTokens` of `0` mean unlimited.
+- `commands` can be omitted entirely. Forge detects the project's native commands and fills each missing gate; set a command to `null` to force detection for that gate.
 - `acceptance.coverage` also accepts a number: `"coverage": 80`.
 - `acceptance.benchmarks` also accepts an array of thresholds, or `false` to disable benchmarks.
 - A command can be a string or `{ "command": "...", "timeoutMs": 600000, "optional": false }`.
 - `acceptance.security.scanners` accepts entries such as `{ "name": "semgrep", "command": "semgrep --json ...", "format": "semgrep", "required": false }`.
 - `acceptance.security.ignore` accepts glob patterns. `vendor/**` matches a directory tree; `*.min.js` matches a basename.
 - `git.checkpoint` commits after each iteration when the workspace is a git repository. Forge excludes `.forge/` through `.git/info/exclude`.
-- `release.enabled` requires the release stage to produce `README.md`, `CHANGELOG.md`, and `docs/RELEASE.md`; `release.tag` creates `v<version>` when `package.json` exposes a version.
+- `release.enabled` requires the release stage to produce `README.md`, `CHANGELOG.md`, and `docs/RELEASE.md`; `release.tag` creates `v<version>` when a recognized project manifest exposes a version (`package.json`, `Cargo.toml`, `pyproject.toml`, `pom.xml`, Gradle, .NET project files, `composer.json`, gemspecs, `pubspec.yaml`, `mix.exs`, `build.sbt`, `DESCRIPTION`, CMake, Autotools, Meson, and others).
 
 The harness fingerprints acceptance, commands, models, budget, loop, and release settings at the start of a run and checks them after every model stage. If a model edits any of them, the iteration fails with a tamper message. This prevents an agent from making the goal easier. Use `forge init --force` or edit the config outside a run when you intentionally want to change the contract.
 
@@ -452,7 +504,7 @@ internal/runner/           OpenCode JSONL runner and event summarizer
 internal/prompts/          per-stage prompt contracts and write scopes
 internal/context/          repository snapshot, git facts, project facts
 internal/gates/            command detection, deterministic gates, review gate
-internal/coverage/         coverage parsing from text and JSON
+internal/coverage/         coverage parsing from JSON, XML, LCOV, Go profiles, and text
 internal/benchmark/        benchmark result parsing and threshold evaluation
 internal/security/         secret scan, scanner parsers, security gate
 internal/reports/          .forge/ state, report contracts, markdown/JSON reports
@@ -484,7 +536,7 @@ Run the harness against itself:
 go run ./cmd/forge gates
 ```
 
-The self-hosting `forge.config.json` in this directory requires 70% statement coverage, `go vet`, a successful build, and `parse_ops_per_sec >= 100000` from the real JSONL parser benchmark. At the time of writing, the suite is above 76% coverage and the parser benchmark is around 480k events/sec on the development machine, but treat those numbers as measurements, not guarantees.
+The self-hosting `forge.config.json` in this directory requires 70% statement coverage, `go vet`, a successful build, and `parse_ops_per_sec >= 100000` from the real JSONL parser benchmark. At the time of writing, the suite is near 79% coverage and the parser benchmark is comfortably above the 100k threshold on the development machine, but treat those numbers as measurements, not guarantees.
 
 To run the full model loop on Forge itself:
 
@@ -510,7 +562,7 @@ This consumes OpenCode model time. Free-model usage limits are enforced by the p
 
 **`forge run` says no test or benchmark command exists.** Run `forge doctor` and `forge gates`; either add commands to `forge.config.json` or let the tester/benchmarker stage create them on the first iteration.
 
-**Coverage is reported as 0% or missing.** Make the coverage command print a recognizable percentage or write a supported JSON summary, then set `acceptance.coverage.file` explicitly. For Go, `go tool cover -func=coverage.out | tail -1` works because Forge prefers the `total: (statements)` line.
+**Coverage is reported as 0% or missing.** Make the coverage command print a recognizable percentage or write a supported summary (Istanbul JSON, Cobertura XML, JaCoCo XML, LCOV, or a text summary), then set `acceptance.coverage.file` explicitly if discovery does not find it. For Go, `go test -coverprofile=coverage.out ./...` works without printing a summary because Forge computes coverage from the profile; `go tool cover -func=coverage.out | tail -1` also works.
 
 **Benchmarks fail with a missing metric.** Inspect the configured `resultsFile` and `forge gates` output. Forge flattens nested JSON, but the threshold's metric name must match the flattened key exactly.
 
@@ -524,10 +576,10 @@ This consumes OpenCode model time. Free-model usage limits are enforced by the p
 
 - The model loop assumes OpenCode's `run --format json` event schema. If that schema changes, update `internal/runner`.
 - Review and security stages are only as good as the model behind them. The deterministic gates are the hard floor; the reviewer is a second signal, not a proof.
-- Coverage parsing is intentionally conservative. Configure `acceptance.coverage.file` for a machine-readable summary when your test runner supports it.
+- Command detection is intentionally best-effort. It recognizes common manifests and task runners, but unusual layouts may need explicit `commands`. Configure `acceptance.coverage.file` for a machine-readable summary when your test runner supports it.
 - Forge does not sandbox model commands. Run it in a workspace you are willing to let an agent modify, and use git checkpoints for recovery.
 - Dollar budgets rely on provider-reported cost or configured `pricing`; unpriced models are treated as free.
-- The bundled starter projects are JavaScript by design. Use the `none` template to bring a Go, Rust, Python, or other project and configure its commands yourself.
+- The bundled starter projects are JavaScript by design. Use the `none` template to add Forge to a Go, Rust, Python, or other project; Forge detects its commands, and you can override any of them in `forge.config.json`.
 - Free OpenCode models are subject to provider quotas and can fail independently of the harness.
 
 ## License

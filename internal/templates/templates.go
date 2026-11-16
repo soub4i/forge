@@ -147,7 +147,7 @@ func copyTemplate(name, dest string, force bool, context struct{ name, goal, dat
 func ensureGitignore(dest string) bool {
 	file := filepath.Join(dest, ".gitignore")
 	if !util.FileExists(file) {
-		_ = util.WriteText(file, ".forge/\nnode_modules/\ncoverage/\nbench/results.json\ndist/\nbuild/\n*.log\n")
+		_ = util.WriteText(file, ".forge/\nnode_modules/\ncoverage/\nbench/results.json\ndist/\nbuild/\ntarget/\nvendor/\n.venv/\n__pycache__/\n*.pyc\n*.log\n")
 		return true
 	}
 	current := util.ReadText(file)
@@ -175,7 +175,7 @@ func copySchema(dest string) (string, error) {
 	return target, nil
 }
 
-func writeAgentInstructions(dest string, cfg config.Config) bool {
+func writeAgentInstructions(dest string, cfg config.Config, detected gates.Detected) bool {
 	file := filepath.Join(dest, "AGENTS.md")
 	if util.FileExists(file) {
 		return false
@@ -188,7 +188,11 @@ func writeAgentInstructions(dest string, cfg config.Config) bool {
 	}
 	commandText := strings.Join(commands, "\n")
 	if commandText == "" {
-		commandText = "- No commands configured yet. Add a test command before implementing."
+		commandText = "- No commands detected. Add the project's standard build/test entry points or configure them in `forge.config.json`."
+	}
+	profile := detected.Profile()
+	if profile == "unknown" {
+		profile = "not detected"
 	}
 	content := fmt.Sprintf(`# Agent instructions
 
@@ -198,18 +202,23 @@ This repository is managed by Forge, an autonomous goal-driven harness.
 
 %s
 
+## Project profile
+
+%s
+
 ## Commands
 
 %s
 
 ## Rules
 
-- Keep the tool dependency-light and portable.
-- Every behavior change needs a unit test. CLI behavior needs an integration test.
+- Use the repository's existing language, build system, package manager, and conventions.
+- Prefer the project's native toolchain and a minimal dependency set.
+- Every behavior change needs a test at the appropriate level: unit, integration, or end-to-end.
 - Tests and benchmarks must be deterministic and offline.
 - Do not weaken tests, benchmarks, or acceptance criteria to make a gate pass.
 - Never commit secrets or machine-specific paths.
-`, cfg.Goal, commandText)
+`, cfg.Goal, profile, commandText)
 	_ = util.WriteText(file, content)
 	return true
 }
@@ -335,7 +344,7 @@ func InitWorkspace(ctx context.Context, options InitOptions) (*InitResult, error
 		return nil, err
 	}
 	ensureGitignore(dest)
-	writeAgentInstructions(dest, cfg)
+	writeAgentInstructions(dest, cfg, detected)
 	if _, err := copySchema(dest); err != nil {
 		return nil, err
 	}

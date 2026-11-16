@@ -46,18 +46,29 @@ func TestProjectFactsForNode(t *testing.T) {
 	if facts.Language != "node" || !facts.HasTests || !facts.HasBench {
 		t.Fatalf("facts = %+v", facts)
 	}
+	if len(facts.Languages) != 1 || facts.Languages[0] != "node" {
+		t.Fatalf("languages = %v", facts.Languages)
+	}
+	if facts.PackageManager != "npm" {
+		t.Fatalf("package manager = %q", facts.PackageManager)
+	}
 	if len(facts.Lockfiles) != 1 || facts.Lockfiles[0] != "package-lock.json" {
 		t.Fatalf("lockfiles = %v", facts.Lockfiles)
 	}
-	if facts.Package["name"] != "demo" {
-		t.Fatalf("package = %+v", facts.Package)
+	var packageFact *ManifestFact
+	for index := range facts.Manifests {
+		if facts.Manifests[index].Path == "package.json" {
+			packageFact = &facts.Manifests[index]
+		}
 	}
-	scripts, ok := facts.Package["scripts"].(map[string]any)
-	if !ok || scripts["test"] != "node --test" {
-		t.Fatalf("scripts = %+v", facts.Package["scripts"])
+	if packageFact == nil || !strings.Contains(packageFact.Preview, `"name": "demo"`) {
+		t.Fatalf("manifests = %+v", facts.Manifests)
 	}
-	if deps, ok := facts.Package["dependencies"].([]string); !ok || len(deps) != 1 || deps[0] != "left-pad" {
-		t.Fatalf("dependencies = %+v", facts.Package["dependencies"])
+	if facts.Commands["test"] != "npm run test" || facts.Commands["build"] != "make build" {
+		t.Fatalf("commands = %+v", facts.Commands)
+	}
+	if len(facts.TaskRunners) != 1 || facts.TaskRunners[0] != "Makefile" {
+		t.Fatalf("task runners = %v", facts.TaskRunners)
 	}
 	joined := strings.Join(facts.TopExtensions, ",")
 	if !strings.Contains(joined, ".js: 2") {
@@ -71,24 +82,34 @@ func TestProjectFactsForNode(t *testing.T) {
 func TestProjectFactsForOtherLanguages(t *testing.T) {
 	goDir := t.TempDir()
 	writeContextFile(t, goDir, "go.mod", "module demo\n\ngo 1.23\n")
-	if facts := ProjectFactsFor(goDir); facts.Language != "go" || !strings.Contains(facts.GoMod, "module demo") {
-		t.Fatalf("go facts = %+v", facts)
+	goFacts := ProjectFactsFor(goDir)
+	if goFacts.Language != "go" || goFacts.PackageManager != "go" || goFacts.Commands["test"] != "go test ./..." {
+		t.Fatalf("go facts = %+v", goFacts)
+	}
+	if len(goFacts.Manifests) != 1 || goFacts.Manifests[0].Path != "go.mod" || !strings.Contains(goFacts.Manifests[0].Preview, "module demo") {
+		t.Fatalf("go manifests = %+v", goFacts.Manifests)
 	}
 
 	rustDir := t.TempDir()
 	writeContextFile(t, rustDir, "Cargo.toml", "[package]\nname = \"demo\"\n")
-	if facts := ProjectFactsFor(rustDir); facts.Language != "rust" || facts.Cargo == "" {
+	if facts := ProjectFactsFor(rustDir); facts.Language != "rust" || facts.PackageManager != "cargo" || len(facts.Manifests) != 1 || facts.Manifests[0].Preview == "" {
 		t.Fatalf("rust facts = %+v", facts)
 	}
 
 	pythonDir := t.TempDir()
 	writeContextFile(t, pythonDir, "pyproject.toml", "[project]\nname = \"demo\"\n")
-	if facts := ProjectFactsFor(pythonDir); facts.Language != "python" || facts.Pyproject == "" {
+	if facts := ProjectFactsFor(pythonDir); facts.Language != "python" || facts.PackageManager != "pip" || len(facts.Manifests) != 1 {
 		t.Fatalf("python facts = %+v", facts)
 	}
 
+	sourceOnly := t.TempDir()
+	writeContextFile(t, sourceOnly, "src/main.go", "package main\n")
+	if facts := ProjectFactsFor(sourceOnly); facts.Language != "go" || facts.Commands["test"] != "" {
+		t.Fatalf("source-only facts = %+v", facts)
+	}
+
 	emptyDir := t.TempDir()
-	if facts := ProjectFactsFor(emptyDir); facts.Language != "unknown" || facts.Files != 0 {
+	if facts := ProjectFactsFor(emptyDir); facts.Language != "unknown" || facts.Files != 0 || len(facts.Manifests) != 0 {
 		t.Fatalf("empty facts = %+v", facts)
 	}
 }
@@ -121,12 +142,12 @@ func TestBuildSnapshotAndRender(t *testing.T) {
 			t.Fatalf("doc %s was not truncated: %d chars", doc.Path, len(doc.Content))
 		}
 	}
-	if snapshot.Project.Language != "unknown" {
+	if snapshot.Project.Language != "node" {
 		t.Fatalf("project = %+v", snapshot.Project)
 	}
 
 	rendered := RenderSnapshot(snapshot)
-	for _, want := range []string{"### Repository files", "README.md", "### Project facts", "### docs/GOAL.md", "the goal"} {
+	for _, want := range []string{"### Repository files", "README.md", "### Project facts", "### docs/GOAL.md", "the goal", `"language": "node"`} {
 		if !strings.Contains(rendered, want) {
 			t.Errorf("snapshot is missing %q:\n%s", want, rendered)
 		}
