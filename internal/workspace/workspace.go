@@ -1,4 +1,4 @@
-package templates
+package workspace
 
 import (
 	"context"
@@ -99,7 +99,6 @@ This repository is managed by Forge, an autonomous goal-driven harness.
 // InitOptions configures workspace creation.
 type InitOptions struct {
 	Dir       string
-	Template  string
 	Goal      string
 	Force     bool
 	Available []string
@@ -125,13 +124,6 @@ func commandPtr(value string) *config.Command {
 
 // InitWorkspace writes Forge control files into an existing or empty project.
 func InitWorkspace(ctx context.Context, options InitOptions) (*InitResult, error) {
-	template := options.Template
-	if template == "" {
-		template = "none"
-	}
-	if template != "none" {
-		return nil, fmt.Errorf("unknown template %q: Forge only writes control files; omit --template or use \"none\"", template)
-	}
 	dest, err := filepath.Abs(options.Dir)
 	if err != nil {
 		return nil, err
@@ -151,7 +143,7 @@ func InitWorkspace(ctx context.Context, options InitOptions) (*InitResult, error
 		}
 	}
 	if goal == "" {
-		return nil, fmt.Errorf("forge init requires --goal <text>: there is no template goal to fall back on")
+		return nil, fmt.Errorf("forge init requires --goal <text>")
 	}
 	detected := gates.DetectProject(dest)
 	commandStrings := gates.DetectedCommandsToJSON(detected)

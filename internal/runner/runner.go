@@ -33,6 +33,9 @@ type Options struct {
 	Timeout time.Duration
 	LogFile string
 	Env     map[string]string
+	// OnEvent receives every decoded OpenCode JSONL event as it arrives so the
+	// CLI can show live progress without buffering the whole session.
+	OnEvent func(map[string]any)
 }
 
 type Result struct {
@@ -200,6 +203,9 @@ func RunStage(parent context.Context, options Options) Result {
 		decoder.UseNumber()
 		if err := decoder.Decode(&event); err == nil {
 			events = append(events, event)
+			if options.OnEvent != nil {
+				options.OnEvent(event)
+			}
 		}
 	}
 	waitErr := cmd.Wait()

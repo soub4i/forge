@@ -13,6 +13,7 @@ import (
 	"github.com/soub4i/forge/internal/gates"
 	gitpkg "github.com/soub4i/forge/internal/git"
 	"github.com/soub4i/forge/internal/models"
+	"github.com/soub4i/forge/internal/progress"
 	"github.com/soub4i/forge/internal/prompts"
 	"github.com/soub4i/forge/internal/reports"
 	"github.com/soub4i/forge/internal/runner"
@@ -66,6 +67,7 @@ type Options struct {
 	Config     config.Config
 	ConfigFile string
 	Verbose    bool
+	Progress   *progress.Display
 }
 
 type stageContext struct {
@@ -112,23 +114,30 @@ func checkConfigIntegrity(configFile, expected string) integrityResult {
 	return integrityResult{OK: true}
 }
 
-func stageLine(stage, model string, iteration int) string {
-	return fmt.Sprintf("→ %-18s iter %d  %s", config.StageLabels[stage], iteration, model)
-}
-
-func stageResultLine(result StageResult) string {
-	mark := "✓"
-	if !result.OK {
-		mark = "✗"
-	}
-	line := fmt.Sprintf("  %s %s  %s in / %s out  %s",
-		mark, util.FormatDuration(result.DurationMs),
+func stageDetail(result StageResult) string {
+	return fmt.Sprintf("%s in / %s out · %s",
 		util.FormatNumber(result.Tokens.Input), util.FormatNumber(result.Tokens.Output),
 		util.FormatUSD(result.CostUSD))
-	if len(result.Errors) > 0 {
-		line += "  " + result.Errors[0]
+}
+
+func gateProgressObserver(display *progress.Display) gates.GateObserver {
+	var completed []string
+	return func(event gates.GateEvent) {
+		if event.Status == "start" {
+			display.SetActivity(fmt.Sprintf("check %d/%d %s running %s", event.Index, event.Total,
+				progress.Bar(event.Index-1, event.Total), event.Name))
+			return
+		}
+		mark := "✓"
+		if event.Status == "fail" {
+			mark = "✗"
+		} else if event.Status == "warn" {
+			mark = "!"
+		}
+		completed = append(completed, event.Name+" "+mark)
+		display.SetActivity(fmt.Sprintf("check %d/%d %s %s", event.Index, event.Total,
+			progress.Bar(event.Index, event.Total), strings.Join(completed, " ")))
 	}
-	return line
 }
 
 func historySummary(iteration int, det *gates.Deterministic, sec *security.Gate, rev *gates.ReviewGate) string {
@@ -265,6 +274,12 @@ func RunHarness(ctx stdctx.Context, options Options) (*Result, error) {
 	cfg := options.Config
 	configFile := options.ConfigFile
 
+	display := options.Progress
+	if display == nil {
+		display = progress.New(progress.Options{})
+	}
+	defer display.Close()
+
 	available := models.ListAvailable(ctx)
 	if available == nil {
 		util.Warn("Could not list OpenCode models; using configured model ids.")
@@ -348,6 +363,7 @@ func RunHarness(ctx stdctx.Context, options Options) (*Result, error) {
 		costLabel = util.FormatUSD(cfg.Budget.MaxUSD)
 	}
 	util.Log(fmt.Sprintf("Budget:    %s  |  %s  |  %s", iterationLabel, timeLabel, costLabel))
+	util.Log("Pipeline:  plan → design → implement → test → gates → security → review → release")
 	util.Log("")
 
 	resolvedAtStart := gates.ResolveCommands(cfg, cwd)
@@ -358,8 +374,12 @@ func RunHarness(ctx stdctx.Context, options Options) (*Result, error) {
 		util.Log("note: no benchmark command detected yet; the benchmarker stage will create one.")
 	}
 
+	if resolvedAtStart.Commands["install"] != nil {
+		display.Start("Install", resolvedAtStart.Commands["install"].Command)
+	}
 	install := gates.RunInstall(ctx, cfg, cwd, run.Dir, &resolvedAtStart)
 	if install.Status != "skip" {
+		display.Finish("Install", install.OK, time.Duration(install.DurationMs)*time.Millisecond, install.Message)
 		if !install.OK {
 			exitReason = "install_failed"
 			errorMessage = "Install command failed: " + install.Command
@@ -367,8 +387,6 @@ func RunHarness(ctx stdctx.Context, options Options) (*Result, error) {
 			if install.LogFile != "" {
 				util.Log("  log: " + install.LogFile)
 			}
-		} else {
-			util.Log(fmt.Sprintf("  install: ok (%s)", util.FormatDuration(install.DurationMs)))
 		}
 	}
 
@@ -419,7 +437,8 @@ func RunHarness(ctx stdctx.Context, options Options) (*Result, error) {
 		var lastResult StageResult
 		var lastErr error
 		for _, model := range attempts {
-			util.Log(stageLine(stage, model, iteration))
+			label := config.StageLabels[stage]
+			display.Start(label, fmt.Sprintf("iter %d · %s", iteration, model))
 			result := runner.RunStage(ctx, runner.Options{
 				Model: model, Prompt: prompt, Cwd: cwd,
 				Title:   fmt.Sprintf("forge %s %s %d", run.ID, stage, iteration),
@@ -428,6 +447,7 @@ func RunHarness(ctx stdctx.Context, options Options) (*Result, error) {
 				Env: map[string]string{
 					"FORGE_RUN_ID": run.ID, "FORGE_ITERATION": fmt.Sprintf("%d", iteration), "FORGE_STAGE": stage,
 				},
+				OnEvent: display.Event,
 			})
 			entry := ledger.Add(cfg, stage, iteration, model, result.CostUSD, result.Tokens, result.DurationMs)
 			promptFile, textFile, _, err := reports.WriteStageArtifacts(run, iteration, stage, prompt, reports.StageArtifactInput{
@@ -443,7 +463,7 @@ func RunHarness(ctx stdctx.Context, options Options) (*Result, error) {
 				SessionID: result.SessionID, Errors: result.Errors, Text: result.Text,
 				PromptFile: promptFile, TextFile: textFile, EventsFile: eventsFile, Ledger: entry,
 			}
-			util.Log(stageResultLine(lastResult))
+			display.Finish(label, lastResult.OK, time.Duration(lastResult.DurationMs)*time.Millisecond, stageDetail(lastResult))
 			if lastResult.OK {
 				return lastResult, nil
 			}
@@ -607,7 +627,9 @@ loop:
 			resolved = gates.ResolveCommands(cfg, cwd)
 		}
 
-		detValue := gates.EvaluateDeterministic(ctx, cfg, cwd, run.Dir, iteration, &resolved)
+		display.Start("Machine gates", fmt.Sprintf("iteration %d", iteration))
+		detValue := gates.EvaluateDeterministic(ctx, cfg, cwd, run.Dir, iteration, &resolved, gateProgressObserver(display))
+		display.Finish("Machine gates", detValue.OK, time.Duration(detValue.DurationMs)*time.Millisecond, gates.FormatRunSummary(detValue))
 		det = &detValue
 		integrity := checkConfigIntegrity(configFile, integrityHash)
 
@@ -624,7 +646,9 @@ loop:
 					break
 				}
 				resolved = gates.ResolveCommands(cfg, cwd)
-				detValue = gates.EvaluateDeterministic(ctx, cfg, cwd, run.Dir, iteration, &resolved)
+				display.Start("Machine gates", fmt.Sprintf("iteration %d · repair %d", iteration, repair+1))
+				detValue = gates.EvaluateDeterministic(ctx, cfg, cwd, run.Dir, iteration, &resolved, gateProgressObserver(display))
+				display.Finish("Machine gates", detValue.OK, time.Duration(detValue.DurationMs)*time.Millisecond, gates.FormatRunSummary(detValue))
 				det = &detValue
 			}
 			integrity = checkConfigIntegrity(configFile, integrityHash)
@@ -685,6 +709,8 @@ loop:
 			secGate = &secGateValue
 			state.SecurityGate = secGate
 			finalSecurityGate = secGate
+			display.Outcome("Security gate", secGate.OK,
+				fmt.Sprintf("%d blocking finding(s)", len(secGate.Blocking)))
 
 			if !secGate.OK {
 				state.Gates = det
@@ -733,6 +759,12 @@ loop:
 			revGate = &revGateValue
 			state.ReviewGate = revGate
 			finalReviewGate = revGate
+			verdict := revGate.Verdict
+			if verdict == "" {
+				verdict = "missing"
+			}
+			display.Outcome("Review gate", revGate.OK,
+				fmt.Sprintf("verdict %s · %d blocking finding(s)", verdict, len(revGate.Blocking)))
 			if !revGate.OK {
 				state.Gates = det
 				state.EndedAt = util.NowISO()

@@ -67,6 +67,26 @@ type Deterministic struct {
 
 var gateOrder = []string{"lint", "typecheck", "build", "test", "coverage"}
 
+// GateEvent reports one machine-gate transition to progress observers.
+type GateEvent struct {
+	Name     string
+	Status   string // start, pass, fail, warn, skip
+	Index    int
+	Total    int
+	Duration time.Duration
+}
+
+// GateObserver receives gate progress events.
+type GateObserver func(GateEvent)
+
+func notifyGate(observers []GateObserver, event GateEvent) {
+	for _, observer := range observers {
+		if observer != nil {
+			observer(event)
+		}
+	}
+}
+
 func gateEnabled(cfg config.Config, name string) bool {
 	switch name {
 	case "test":
@@ -140,7 +160,8 @@ func RunInstall(ctx context.Context, cfg config.Config, cwd, runDir string, reso
 
 // EvaluateDeterministic runs every machine-checkable gate. Security scanners
 // are skipped when code gates fail, because fixing broken code comes first.
-func EvaluateDeterministic(ctx context.Context, cfg config.Config, cwd, runDir string, iteration int, resolved *Resolved) Deterministic {
+// Optional observers receive progress events for each enabled check.
+func EvaluateDeterministic(ctx context.Context, cfg config.Config, cwd, runDir string, iteration int, resolved *Resolved, observers ...GateObserver) Deterministic {
 	started := time.Now()
 	if resolved == nil {
 		r := ResolveCommands(cfg, cwd)
@@ -148,6 +169,17 @@ func EvaluateDeterministic(ctx context.Context, cfg config.Config, cwd, runDir s
 	}
 	timeoutMs := cfg.Loop.StageTimeoutMinutes * 60 * 1000
 	commands := make([]GateCommand, 0, len(gateOrder))
+
+	total := 0
+	for _, name := range gateOrder {
+		if gateEnabled(cfg, name) {
+			total++
+		}
+	}
+	if cfg.Acceptance.Benchmarks.Required {
+		total++
+	}
+	index := 0
 
 	for _, name := range gateOrder {
 		if !gateEnabled(cfg, name) {
@@ -157,7 +189,14 @@ func EvaluateDeterministic(ctx context.Context, cfg config.Config, cwd, runDir s
 		if name == "coverage" && cfg.Acceptance.Coverage.File != nil && *cfg.Acceptance.Coverage.File != "" {
 			_ = os.Remove(filepath.Join(cwd, *cfg.Acceptance.Coverage.File))
 		}
-		commands = append(commands, runNamedCommand(ctx, name, resolved.Commands[name], cwd, runDir, iteration, timeoutMs))
+		index++
+		notifyGate(observers, GateEvent{Name: name, Status: "start", Index: index, Total: total})
+		command := runNamedCommand(ctx, name, resolved.Commands[name], cwd, runDir, iteration, timeoutMs)
+		notifyGate(observers, GateEvent{
+			Name: name, Status: command.Status, Index: index, Total: total,
+			Duration: time.Duration(command.DurationMs) * time.Millisecond,
+		})
+		commands = append(commands, command)
 	}
 
 	coverageResult := CoverageResult{Required: cfg.Acceptance.Coverage.Min, OK: true, Skipped: true}
@@ -217,7 +256,13 @@ func EvaluateDeterministic(ctx context.Context, cfg config.Config, cwd, runDir s
 				resultsFile = "bench/results.json"
 			}
 			_ = os.Remove(filepath.Join(cwd, resultsFile))
+			index++
+			notifyGate(observers, GateEvent{Name: "benchmark", Status: "start", Index: index, Total: total})
 			command := runNamedCommand(ctx, "benchmark", spec, cwd, runDir, iteration, timeoutMs)
+			notifyGate(observers, GateEvent{
+				Name: "benchmark", Status: command.Status, Index: index, Total: total,
+				Duration: time.Duration(command.DurationMs) * time.Millisecond,
+			})
 			evaluated := benchmark.Evaluate(cfg, cwd, command.Stdout)
 			evaluated.Required = true
 			evaluated.Skipped = false
@@ -353,6 +398,39 @@ func ReviewGateFor(cfg config.Config, report *ReviewReport) ReviewGate {
 		OK: ok, Verdict: valueOr(verdict, "missing"), Blocking: blocking, Findings: findings,
 		DesignChangeNeeded: report.DesignChangeNeeded, Summary: report.Summary, Message: message, Report: report,
 	}
+}
+
+// FormatRunSummary renders a compact one-line summary of a gate evaluation.
+func FormatRunSummary(det Deterministic) string {
+	passed, total := 0, 0
+	var failed []string
+	for _, command := range det.Commands {
+		if command.Status == "skip" {
+			continue
+		}
+		total++
+		if command.OK {
+			passed++
+		} else {
+			failed = append(failed, command.Name)
+		}
+	}
+	if !det.Benchmark.Skipped {
+		total++
+		if det.Benchmark.OK {
+			passed++
+		} else {
+			failed = append(failed, "benchmark")
+		}
+	}
+	summary := fmt.Sprintf("%d/%d checks passed", passed, total)
+	if det.Coverage.Percent != nil && !det.Coverage.Skipped {
+		summary += fmt.Sprintf(" · coverage %g%%", *det.Coverage.Percent)
+	}
+	if len(failed) > 0 {
+		summary += " · failing: " + strings.Join(failed, ", ")
+	}
+	return summary
 }
 
 // FormatGateSummary renders a compact one-line gate summary.

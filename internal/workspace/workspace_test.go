@@ -1,4 +1,4 @@
-package templates
+package workspace
 
 import (
 	"context"
@@ -123,22 +123,6 @@ func TestInitWorkspaceRequiresGoal(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "--goal") {
 		t.Fatalf("error = %v", err)
-	}
-}
-
-func TestInitWorkspaceRejectsRemovedTemplates(t *testing.T) {
-	for _, template := range []string{"cli", "log-aggregator", "nope"} {
-		t.Run(template, func(t *testing.T) {
-			_, err := InitWorkspace(context.Background(), InitOptions{
-				Dir: filepath.Join(t.TempDir(), "x"), Template: template, Available: []string{},
-			})
-			if err == nil {
-				t.Fatalf("expected template %q to be rejected", template)
-			}
-			if !strings.Contains(err.Error(), "control files") {
-				t.Fatalf("error = %v", err)
-			}
-		})
 	}
 }
 

@@ -2,6 +2,30 @@
 
 All notable changes to Forge are documented here. The format follows Keep a Changelog, and releases use semantic versioning.
 
+## [1.3.0] - 2026-11-21
+
+### Removed
+
+- `--template` from `forge init`; any use now exits with a clear message. Forge only writes control files.
+- The `internal/templates` package; workspace initialization now lives in `internal/workspace`.
+
+### Added
+
+- Live terminal progress display for `forge run` and `forge gates`: spinner, elapsed time, current stage, active tool or gate check, tool calls, tokens, and cost.
+- `--no-progress` and `FORGE_NO_PROGRESS=1` to disable the status line; colors honor `NO_COLOR` and `TERM=dumb`.
+- OpenCode event streaming from the runner and gate observer callbacks that feed the progress display.
+- Compact per-stage and per-gate result lines so non-interactive logs are easier to follow.
+
+### Changed
+
+- Version bumped to 1.3.0.
+- README and CLI help describe control-files-only init and the live progress display.
+
+### Validated
+
+- Go unit suite passes across all packages.
+- `go vet ./...` and `go build ./...` pass.
+
 ## [1.2.0] - 2026-11-16
 
 ### Removed

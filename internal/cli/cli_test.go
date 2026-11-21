@@ -134,7 +134,7 @@ func TestInitStatusAndDryRun(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	fakeOpenCodeCLI(t)
 	dir := filepath.Join(t.TempDir(), "workspace")
-	if code := Main([]string{"init", dir, "--template", "none", "--goal", "Build a thing"}); code != 0 {
+	if code := Main([]string{"init", dir, "--goal", "Build a thing"}); code != 0 {
 		t.Fatalf("init exit = %d", code)
 	}
 	if !util.FileExists(filepath.Join(dir, "forge.config.json")) {
@@ -146,8 +146,8 @@ func TestInitStatusAndDryRun(t *testing.T) {
 	if code := Main([]string{"run", dir, "--dry-run"}); code != 0 {
 		t.Fatalf("dry-run exit = %d", code)
 	}
-	if code := Main([]string{"init", dir, "--template", "nope"}); code != 1 {
-		t.Fatalf("invalid template exit = %d", code)
+	if _, err := commandInit(parseFlags([]string{dir, "--template", "none", "--force"})); err == nil || !strings.Contains(err.Error(), "--template was removed") {
+		t.Fatalf("removed --template error = %v", err)
 	}
 	defaultDir := filepath.Join(t.TempDir(), "default")
 	if code := Main([]string{"init", defaultDir, "--goal", "Default init"}); code != 0 {
@@ -155,9 +155,6 @@ func TestInitStatusAndDryRun(t *testing.T) {
 	}
 	if util.FileExists(filepath.Join(defaultDir, "package.json")) {
 		t.Fatal("default init generated a JavaScript project")
-	}
-	if code := Main([]string{"init", defaultDir, "--template", "cli", "--force"}); code != 1 {
-		t.Fatalf("removed template exit = %d", code)
 	}
 	if code := Main([]string{"init", filepath.Join(t.TempDir(), "no-goal")}); code != 1 {
 		t.Fatalf("missing goal exit = %d", code)

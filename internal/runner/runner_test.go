@@ -66,6 +66,31 @@ exit 0
 	}
 }
 
+func TestRunStageStreamsEvents(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake binary uses a shell script")
+	}
+	fakeOpenCode(t, `#!/bin/sh
+echo '{"type":"tool","part":{"tool":"read"}}'
+echo '{"type":"step_finish","part":{"cost":0,"tokens":{"input":1,"output":1}}}'
+exit 0
+`)
+	var types []string
+	result := RunStage(context.Background(), Options{
+		Model: "opencode/model", Prompt: "x", Cwd: t.TempDir(), Timeout: 5 * time.Second,
+		OnEvent: func(event map[string]any) {
+			kind, _ := event["type"].(string)
+			types = append(types, kind)
+		},
+	})
+	if !result.OK {
+		t.Fatalf("result = %+v", result)
+	}
+	if strings.Join(types, ",") != "tool,step_finish" {
+		t.Fatalf("streamed events = %v", types)
+	}
+}
+
 func TestRunStageFailure(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake binary uses a shell script")

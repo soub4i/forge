@@ -17,14 +17,15 @@ import (
 	gitpkg "github.com/soub4i/forge/internal/git"
 	"github.com/soub4i/forge/internal/models"
 	"github.com/soub4i/forge/internal/orchestrator"
+	"github.com/soub4i/forge/internal/progress"
 	"github.com/soub4i/forge/internal/reports"
 	"github.com/soub4i/forge/internal/security"
-	"github.com/soub4i/forge/internal/templates"
 	"github.com/soub4i/forge/internal/util"
+	"github.com/soub4i/forge/internal/workspace"
 )
 
 // Version is the Forge harness version.
-const Version = "1.2.0"
+const Version = "1.3.0"
 
 // Flags is a small permissive flag parser matching the JS harness.
 type Flags struct {
@@ -171,10 +172,12 @@ func commandInit(flags Flags) (int, error) {
 	if len(flags.Args) > 0 && flags.Args[0] != "" {
 		dir = flags.Args[0]
 	}
-	template, _ := flags.String("template")
+	if flags.Bool("template") {
+		return 1, fmt.Errorf("--template was removed in 1.3.0; forge init only writes control files")
+	}
 	goal, _ := flags.String("goal")
-	result, err := templates.InitWorkspace(context.Background(), templates.InitOptions{
-		Dir: dir, Template: template, Goal: goal, Force: flags.Bool("force"),
+	result, err := workspace.InitWorkspace(context.Background(), workspace.InitOptions{
+		Dir: dir, Goal: goal, Force: flags.Bool("force"),
 	})
 	if err != nil {
 		return 1, err
@@ -229,6 +232,35 @@ func mustGetwd() string {
 		return "."
 	}
 	return wd
+}
+
+func newProgressDisplay(flags Flags, workspace string) *progress.Display {
+	enabled := !flags.Bool("no-progress") && os.Getenv("FORGE_NO_PROGRESS") == "" &&
+		os.Getenv("CI") == "" && progress.IsTerminal(os.Stdout)
+	color := enabled && os.Getenv("NO_COLOR") == "" && strings.ToLower(os.Getenv("TERM")) != "dumb"
+	return progress.New(progress.Options{
+		Writer: os.Stdout, Cwd: workspace, Enabled: enabled, Color: color,
+	})
+}
+
+func gateProgressObserver(display *progress.Display) gates.GateObserver {
+	var completed []string
+	return func(event gates.GateEvent) {
+		if event.Status == "start" {
+			display.SetActivity(fmt.Sprintf("check %d/%d %s running %s", event.Index, event.Total,
+				progress.Bar(event.Index-1, event.Total), event.Name))
+			return
+		}
+		mark := "✓"
+		if event.Status == "fail" {
+			mark = "✗"
+		} else if event.Status == "warn" {
+			mark = "!"
+		}
+		completed = append(completed, event.Name+" "+mark)
+		display.SetActivity(fmt.Sprintf("check %d/%d %s %s", event.Index, event.Total,
+			progress.Bar(event.Index, event.Total), strings.Join(completed, " ")))
+	}
 }
 
 func printPlan(workspace string, cfg config.Config, configFile string) {
@@ -311,9 +343,11 @@ func commandRun(flags Flags) (int, error) {
 		printPlan(workspace, loaded.Config, loaded.File)
 		return 0, nil
 	}
+	display := newProgressDisplay(flags, workspace)
+	defer display.Close()
 	result, err := orchestrator.RunHarness(context.Background(), orchestrator.Options{
 		Cwd: workspace, Config: loaded.Config, ConfigFile: loaded.File,
-		Verbose: flags.Bool("verbose"),
+		Verbose: flags.Bool("verbose"), Progress: display,
 	})
 	if err != nil {
 		return 1, err
@@ -340,8 +374,11 @@ func commandGates(flags Flags) (int, error) {
 	runDir := filepath.Join(reports.ForgeDir(workspace), "gates", util.RunID(time.Now()))
 	_ = util.EnsureDir(filepath.Join(runDir, "commands"))
 	_ = util.EnsureDir(filepath.Join(runDir, "security"))
-	util.Log("Running machine gates in " + workspace)
-	det := gates.EvaluateDeterministic(context.Background(), loaded.Config, workspace, runDir, 0, nil)
+	display := newProgressDisplay(flags, workspace)
+	defer display.Close()
+	display.Start("Machine gates", workspace)
+	det := gates.EvaluateDeterministic(context.Background(), loaded.Config, workspace, runDir, 0, nil, gateProgressObserver(display))
+	display.Finish("Machine gates", det.OK, time.Duration(det.DurationMs)*time.Millisecond, gates.FormatRunSummary(det))
 	util.Log("")
 	for _, command := range det.Commands {
 		if command.Status == "skip" {
@@ -697,7 +734,6 @@ Commands:
 
 Init flags:
   --goal <text>             Goal statement (required for a new workspace)
-  --template <name>         none (default and only built-in; accepted for compatibility)
   --force                   Overwrite generated control files and an existing config
 
 Run flags:
@@ -709,6 +745,7 @@ Run flags:
   --checkpoint              Commit after each iteration (requires git)
   --dry-run                 Print the plan without calling models
   --verbose                 More console detail
+  --no-progress             Disable the live status line (also FORGE_NO_PROGRESS=1)
 
 Examples:
   cd my-project
