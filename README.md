@@ -144,10 +144,9 @@ Projects with only source files (no manifest) still get a language profile, but 
 | Flag | Meaning |
 | --- | --- |
 | `--goal <text>` | Goal statement (required for a new workspace) |
-| `--template <name>` | `none` (default and only built-in; accepted for compatibility) |
 | `--force` | Overwrite generated control files and an existing `forge.config.json` |
 
-`forge init` detects the project type, writes runnable commands into `forge.config.json`, and picks model routing from the models currently available through OpenCode. A new workspace requires `--goal`, since Forge no longer supplies a template goal. It is safe to run `forge init . --force` to regenerate control files; without `--goal`, the existing goal is preserved. `--force` overwrites the config, goal document, and schema, but preserves an existing `AGENTS.md` and only appends `.forge/` to an existing `.gitignore`.
+`forge init` detects the project type, writes runnable commands into `forge.config.json`, and picks model routing from the models currently available through OpenCode. A new workspace requires `--goal`, since Forge does not scaffold projects or supply a starter goal. The old `--template` flag was removed in 1.3.0. It is safe to run `forge init . --force` to regenerate control files; without `--goal`, the existing goal is preserved. `--force` overwrites the config, goal document, and schema, but preserves an existing `AGENTS.md` and only appends `.forge/` to an existing `.gitignore`.
 
 ## Commands
 
@@ -177,6 +176,7 @@ The workspace argument is optional and defaults to the current directory. Both `
 | `--no-checkpoint` | Disable checkpoints for this run |
 | `--dry-run` | Print the resolved plan without calling models |
 | `--verbose` | More console detail |
+| `--no-progress` | Disable the live status line (also `FORGE_NO_PROGRESS=1`) |
 
 Examples:
 
@@ -187,6 +187,20 @@ forge run --config ./configs/strict.json --checkpoint
 ```
 
 `status`, `doctor`, and `models` also accept `--json`. `status --report` prints the latest markdown report.
+
+### Live progress
+
+On an interactive terminal, `forge run` and `forge gates` draw a live status line while work is in progress:
+
+```text
+→ Implementer  ·  iter 1  ·  opencode/deepseek-v4.1-flash-free
+  ⠹ 01:24 · editing internal/gates/gates.go · 12 tools · 4.3k tok
+  ✓ Implementer  ·  1m 32s  ·  8,231 in / 1,204 out  ·  $0.00
+```
+
+The line reports elapsed time, what the model is currently doing (the active tool and file or command), tool calls, tokens, and cost. Gate runs show a progress bar and the current check, for example `check 3/5 ██████░░ lint ✓ typecheck ✓ build ✓`, followed by a compact gate summary. Stage and gate results stay in the log after the live line is cleared.
+
+Progress is disabled automatically when stdout is not a terminal, and can be turned off explicitly with `--no-progress` or `FORGE_NO_PROGRESS=1`. Colors honor `NO_COLOR` and `TERM=dumb`.
 
 ## How the loop works
 
@@ -484,11 +498,12 @@ internal/coverage/         coverage parsing from JSON, XML, LCOV, Go profiles, a
 internal/benchmark/        benchmark result parsing and threshold evaluation
 internal/security/         secret scan, scanner parsers, security gate
 internal/reports/          .forge/ state, report contracts, markdown/JSON reports
-internal/templates/        workspace init and embedded config schema
+internal/workspace/        workspace init and embedded config schema
+internal/progress/         live terminal status line and activity display
 internal/git/              checkpoints, tags, .forge exclusion
 internal/util/             commands, files, JSONL, hashes, formatting
 bench/main.go              self-benchmark for the production event parser
-internal/templates/assets/ embedded forge.schema.json
+internal/workspace/assets/ embedded forge.schema.json
 forge.config.json          self-hosting config used to gate Forge itself
 ```
 
@@ -555,7 +570,7 @@ This consumes OpenCode model time. Free-model usage limits are enforced by the p
 - Command detection is intentionally best-effort. It recognizes common manifests and task runners, but unusual layouts may need explicit `commands`. Configure `acceptance.coverage.file` for a machine-readable summary when your test runner supports it.
 - Forge does not sandbox model commands. Run it in a workspace you are willing to let an agent modify, and use git checkpoints for recovery.
 - Dollar budgets rely on provider-reported cost or configured `pricing`; unpriced models are treated as free.
-- Forge does not scaffold application code. `forge init` adds control files to an existing project or an empty directory; use your own tooling to create and maintain the project. The JavaScript starter templates were removed in 1.2.0.
+- Forge does not scaffold application code or offer starter templates. `forge init` adds control files to an existing project or an empty directory; use your own tooling to create and maintain the project.
 - Free OpenCode models are subject to provider quotas and can fail independently of the harness.
 
 ## License

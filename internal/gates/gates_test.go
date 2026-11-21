@@ -222,6 +222,41 @@ func TestEvaluateDeterministicPassingCommands(t *testing.T) {
 	}
 }
 
+func TestEvaluateDeterministicNotifiesObserver(t *testing.T) {
+	cfg := baseGateConfig()
+	cfg.Commands.Test = &config.Command{Command: "true"}
+	var events []GateEvent
+	EvaluateDeterministic(context.Background(), cfg, t.TempDir(), t.TempDir(), 1, nil, func(event GateEvent) {
+		events = append(events, event)
+	})
+	starts := 0
+	for _, event := range events {
+		if event.Status == "start" {
+			starts++
+			if event.Total < 1 || event.Index < 1 || event.Index > event.Total {
+				t.Fatalf("bad progress event = %+v", event)
+			}
+		}
+	}
+	if starts == 0 || len(events) != starts*2 {
+		t.Fatalf("gate events = %+v", events)
+	}
+	if summary := FormatRunSummary(gatesFromEvents(events)); !strings.Contains(summary, "checks passed") {
+		t.Fatalf("summary = %q", summary)
+	}
+}
+
+func gatesFromEvents(events []GateEvent) Deterministic {
+	det := Deterministic{Coverage: CoverageResult{Skipped: true}, Benchmark: benchmark.Result{Skipped: true}}
+	for _, event := range events {
+		if event.Status == "start" {
+			continue
+		}
+		det.Commands = append(det.Commands, GateCommand{Name: event.Name, Status: event.Status, OK: event.Status == "pass"})
+	}
+	return det
+}
+
 func TestEvaluateDeterministicFailingAndOptionalCommands(t *testing.T) {
 	cfg := baseGateConfig()
 	cfg.Commands.Test = &config.Command{Command: "echo boom >&2; exit 3"}
