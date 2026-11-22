@@ -1,88 +1,98 @@
-# Forge (Go)
+# Forge
+
+![Forge gates live progress](docs/forge-gates.gif)
 
 [![CI](https://github.com/soub4i/forge/actions/workflows/ci.yml/badge.svg)](https://github.com/soub4i/forge/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/soub4i/forge?sort=semver)](https://github.com/soub4i/forge/releases)
+[![Go](https://img.shields.io/badge/Go-1.23%2B-00ADD8)](https://go.dev/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Forge is a reusable, language-agnostic, multi-model coding harness. You give it a goal and a workspace; it plans, designs, implements, tests, benchmarks, security-reviews, independently reviews, and releases in a loop until machine-checked gates and an independent reviewer agree.
+Forge is a gate-driven, language-agnostic coding harness. Give it a goal and a workspace; it plans, implements, tests, benchmarks, reviews, and releases in bounded loops until machine-checked gates and an independent reviewer agree.
 
-This is the Go implementation of Forge. The harness is pure Go with no third-party dependencies. It adds control files to a project in any language, detects the project manifests, package managers, and task runners, and runs the project's native install, lint, typecheck, build, test, coverage, and benchmark commands. Explicit `commands` in `forge.config.json` always win; detection fills the gaps. Forge does not scaffold application code or impose a language, framework, or project layout.
+Forge is a single Go binary with no third-party Go dependencies. It adds control files to an existing project, detects native commands, and never scaffolds application code or imposes a framework. Explicit configuration always wins; detection fills the gaps.
 
-```sh
-cd my-project
-forge init . --goal "Add structured logging without changing the public API"
-forge doctor
-forge gates
-forge run
-```
+## Contents
 
-## Why it exists
+- [Why Forge](#why-forge)
+- [Install](#install)
+- [Quick start](#quick-start)
+- [How it works](#how-it-works)
+- [Machine gates](#machine-gates)
+- [Model routing](#model-routing)
+- [Configuration](#configuration)
+- [CLI reference](#cli-reference)
+- [Artifacts](#artifacts)
+- [Development](#development)
+- [Contributing](#contributing)
+- [Troubleshooting](#troubleshooting)
+- [Limitations](#limitations)
+- [License](#license)
 
-Most AI coding tools stop when the model says it is done. Forge stops only when hard checks pass:
+## Why Forge
 
-- test, coverage, lint, typecheck, and build commands succeed
+Most coding agents stop when the model says it is done. Forge stops when the contract passes:
+
+- tests, coverage, lint, typecheck, and build commands succeed
 - benchmark metrics meet configured thresholds
 - the built-in secret scan is clean and external scanners report nothing above the allowed severity
 - an independent reviewer, which did not write the code, approves with no blocking findings
-- the acceptance config was not weakened while the loop was running
+- the acceptance configuration was not weakened while the loop was running
 
-If a check fails, Forge writes a bounded feedback file, repairs, escalates to the architect-tier model when it is stuck, and tries again until the budget or iteration limit is exhausted. The model is an implementation detail; the gates are the contract.
+When a check fails, Forge writes a bounded feedback file, repairs, escalates to a stronger model when it is stuck, and tries again until the budget or iteration limit is exhausted. The model is an implementation detail; the gates are the contract.
 
-## Requirements
+Forge is designed for open, reproducible workflows:
 
-- **Go 1.23+** to build the harness (the module targets `go 1.23`)
-- The **`opencode` CLI** on `PATH`, authenticated with at least one model
-- **Git** optional, for repository context, checkpoints, and release tags
-- The **native toolchain of the project you want to build** (Node.js, Go, Rust, Python, Java, .NET, Ruby, PHP, C/C++, Swift, Dart/Flutter, Elixir, Scala, Haskell, Zig, Deno, Lua, R, Julia, or a Makefile/just/Taskfile/Bazel/Nix-driven build)
-- No database, daemon, API key manager, or runtime package dependencies
-
-Check the environment:
-
-```sh
-go version
-opencode --version
-```
+- **Bring your own project.** Any language, framework, or build system is welcome.
+- **Bring your own models.** Routing is per stage and configurable through OpenCode.
+- **Keep the evidence.** Prompts, events, command logs, reports, and costs are written under `.forge/`.
+- **Keep control.** Budgets, write scopes, config fingerprints, and checkpoints bound what an agent can do.
 
 ## Install
 
-From this directory:
+### Requirements
 
-```sh
-# Build a local binary in ./forge
-go build -o forge ./cmd/forge
+- **Go 1.23+** to build or install from source
+- The [`opencode` CLI](https://opencode.ai/) on `PATH`, authenticated with at least one model
+- **Git** (optional) for repository context, checkpoints, and release tags
+- The native toolchain for the project you want to build
 
-# Or install onto your PATH (usually $GOBIN or $HOME/go/bin)
-go install ./cmd/forge
-forge version
-```
+Forge builds and runs with the Go standard library only. It does not need a database, daemon, or API-key manager.
 
-To install the published module directly:
+### From source
 
 ```sh
 go install github.com/soub4i/forge/cmd/forge@latest
+forge version
 ```
 
-If `forge` is not found after `go install`, add Go's bin directory to `PATH`:
+If `forge` is not found after installation, add Go's bin directory to `PATH`:
 
 ```sh
 export PATH="$PATH:$(go env GOPATH)/bin"
 ```
 
-You can also run the harness directly without installing it:
+From a checkout:
 
 ```sh
-go run ./cmd/forge --help
+go build -o forge ./cmd/forge   # local ./forge binary
+go install ./cmd/forge          # install into $GOBIN or $HOME/go/bin
+go run ./cmd/forge help         # run without installing
 ```
+
+Published binaries for Linux, macOS, and Windows are available on the [releases page](https://github.com/soub4i/forge/releases). Each release includes `checksums.txt`.
 
 ## Quick start
 
 ```sh
-# 1. Add Forge control files to an existing project or an empty directory
 cd my-project
+
+# 1. Add Forge control files to an existing project or an empty directory
 forge init . --goal "Add structured logging without changing the public API"
 
 # 2. Check OpenCode, model availability, commands, config, and git
 forge doctor
 
-# 3. Inspect the resolved plan without calling any model or writing run files
+# 3. Inspect the resolved plan without calling a model
 forge run --dry-run
 
 # 4. Run only the deterministic gates
@@ -107,18 +117,18 @@ my-project/
   .gitignore               ignores .forge/, dependencies, coverage, and build output
 ```
 
-Forge records the commands it detected in `forge.config.json`; edit or replace them at any time. If the project has no recognizable command, add a root `Makefile` target, `just` recipe, `Taskfile` task, or executable `test.sh`/`build.sh`, or set `commands` manually. A `Makefile`, justfile, Taskfile, or conventional script is enough for the fallback path.
+Forge records detected commands in `forge.config.json`; edit or replace them at any time. If no command is detected, add a `Makefile` target, `just` recipe, `Taskfile` task, or conventional `test.sh`/`build.sh` script, or configure `commands` manually.
 
-The generated `AGENTS.md` records the detected project profile and commands. Existing `AGENTS.md` and `.gitignore` files are preserved; Forge only appends `.forge/` when a `.gitignore` already exists.
+Existing `AGENTS.md` and `.gitignore` files are preserved. Forge only appends `.forge/` when a `.gitignore` already exists.
 
-### Language and project support
+### Detected ecosystems
 
-Detection is best-effort and additive. Forge scans manifests and source files, chooses a primary ecosystem from source-file counts when several are present, and fills missing gates from other ecosystems, task runners, and scripts. Explicit `commands` remain authoritative.
+Detection is best-effort and additive. Forge scans manifests and source files, chooses a primary ecosystem from source-file counts when several are present, and fills missing gates from other ecosystems, task runners, and scripts.
 
 | Project | Detected from |
 | --- | --- |
 | Node.js / Bun / Deno | `package.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lockb`, `deno.json` |
-| Go | `go.mod` (workspace `go.work` files are recorded as manifests) |
+| Go | `go.mod` (`go.work` files are recorded as manifests) |
 | Rust | `Cargo.toml` |
 | Python | `pyproject.toml`, `requirements.txt`, `setup.py`, `Pipfile`, `uv.lock`, `poetry.lock`, `tox.ini` |
 | Java / Kotlin | `pom.xml`, `build.gradle`, `build.gradle.kts`, Maven/Gradle wrappers |
@@ -137,78 +147,11 @@ Detection is best-effort and additive. Forge scans manifests and source files, c
 | Julia | `Project.toml` |
 | Task runners / scripts | `Makefile`, `justfile`, `Taskfile.yml`, Bazel, Nix, executable `test.sh`/`build.sh`/etc. |
 
-Projects with only source files (no manifest) still get a language profile, but Forge does not invent commands for them. Add a task runner, a conventional script, or explicit `commands`.
+Projects with only source files still get a language profile, but Forge does not invent commands for them. Add a task runner, a conventional script, or explicit `commands`.
 
-### Init flags
+## How it works
 
-| Flag | Meaning |
-| --- | --- |
-| `--goal <text>` | Goal statement (required for a new workspace) |
-| `--force` | Overwrite generated control files and an existing `forge.config.json` |
-
-`forge init` detects the project type, writes runnable commands into `forge.config.json`, and picks model routing from the models currently available through OpenCode. A new workspace requires `--goal`, since Forge does not scaffold projects or supply a starter goal. The old `--template` flag was removed in 1.3.0. It is safe to run `forge init . --force` to regenerate control files; without `--goal`, the existing goal is preserved. `--force` overwrites the config, goal document, and schema, but preserves an existing `AGENTS.md` and only appends `.forge/` to an existing `.gitignore`.
-
-## Commands
-
-```text
-forge init [dir]        Create a workspace, goal, config, and schema
-forge run [dir]         Run the goal-driven loop until gates + review pass
-forge gates [dir]       Run only the machine gates (no model calls)
-forge status [dir]      Show the latest run and recent history
-forge doctor [dir]      Check OpenCode, models, commands, config, and git
-forge models [dir]      Show model routing and prices
-forge version           Show the harness version
-forge help              Show CLI help
-```
-
-The workspace argument is optional and defaults to the current directory. Both `forge run /path/to/project` and `cd /path/to/project && forge run` work.
-
-### Run flags
-
-| Flag | Meaning |
-| --- | --- |
-| `--max-iterations <n>` | Iteration limit; `0` means unlimited |
-| `--budget <usd>` | Cost budget; `0` means unlimited |
-| `--max-minutes <n>` | Wall-clock budget; `0` means unlimited |
-| `--model <stage=model>` | Override one stage model; repeatable |
-| `--config <file>` | Use a specific config file |
-| `--checkpoint` | Commit after each iteration (requires git) |
-| `--no-checkpoint` | Disable checkpoints for this run |
-| `--dry-run` | Print the resolved plan without calling models |
-| `--verbose` | More console detail |
-| `--no-progress` | Disable the live status line (also `FORGE_NO_PROGRESS=1`) |
-
-Examples:
-
-```sh
-forge run --max-iterations 4 --budget 5
-forge run --model reviewer=provider/strong-model --model implementer=provider/cheap-model
-forge run --config ./configs/strict.json --checkpoint
-```
-
-`status`, `doctor`, and `models` also accept `--json`. `status --report` prints the latest markdown report.
-
-### Live progress
-
-![Forge gates live progress](docs/forge-gates.gif)
-
-*Recording of `forge gates` on the Forge repository: live spinner, gate progress bar, completion checklist, and final result.*
-
-On an interactive terminal, `forge run` and `forge gates` draw a live status line while work is in progress:
-
-```text
-→ Implementer  ·  iter 1  ·  opencode/deepseek-v4.1-flash-free
-  ⠹ 01:24 · editing internal/gates/gates.go · 12 tools · 4.3k tok
-  ✓ Implementer  ·  1m 32s  ·  8,231 in / 1,204 out  ·  $0.00
-```
-
-The line reports elapsed time, what the model is currently doing (the active tool and file or command), tool calls, tokens, and cost. Gate runs show a progress bar and the current check, for example `check 3/5 ██████░░ lint ✓ typecheck ✓ build ✓`, followed by a compact gate summary. Stage and gate results stay in the log after the live line is cleared.
-
-Progress is disabled automatically when stdout is not a terminal, and can be turned off explicitly with `--no-progress` or `FORGE_NO_PROGRESS=1`. Colors honor `NO_COLOR` and `TERM=dumb`.
-
-## How the loop works
-
-One iteration:
+One iteration runs these stages:
 
 1. **Architect** writes `docs/ARCHITECTURE.md` and `docs/PLAN.md`.
 2. **Designer** writes `docs/DESIGN.md` and refines the plan.
@@ -216,24 +159,24 @@ One iteration:
 4. **Tester** strengthens tests and closes test gaps.
 5. **Benchmarker** creates or repairs the benchmark when one is required.
 6. **Machine gates** run install, lint, typecheck, build, test, coverage, benchmark, secret scan, and external scanners.
-7. **Fixer** runs up to `loop.repairAttempts` times if the deterministic gates fail.
+7. **Fixer** runs up to `loop.repairAttempts` times if deterministic gates fail.
 8. **Security** performs an adversarial review and writes `.forge/security.json`.
 9. **Reviewer** independently reviews the result and writes `.forge/review.json`.
 10. **Release** writes `README.md`, `CHANGELOG.md`, and `docs/RELEASE.md`, and optionally creates a git tag.
 
-Architecture and design are skipped on later iterations unless their docs are missing or the reviewer requests a design change. The benchmarker is skipped when benchmarks are not required and when a benchmark command already exists. This keeps repair iterations cheaper.
+Architecture and design are skipped on later iterations unless their documents are missing or a design change is requested. The benchmarker is skipped when benchmarks are not required or when a benchmark command already exists. This keeps repair iterations cheaper.
 
 When a failure repeats `loop.escalateAfter` times, a **Triage** stage diagnoses the root cause and the implementer/fixer use the architect-tier model for that iteration. A reviewer can request a design change, in which case architecture and design are regenerated before implementation resumes.
 
-A stage runs in a fresh OpenCode session and hands work to the next stage through files. Every stage has a narrow write scope: security, review, and triage are read-only for production code; release may only touch documentation and release metadata.
+Each stage runs in a fresh OpenCode session and hands work to the next stage through files. Write scopes are narrow: security, review, and triage are read-only for production code; release may only touch documentation and release metadata.
 
 ## Machine gates
 
-`forge gates` is safe to run without any model calls and is the fastest way to check whether a workspace is releasable. It writes command logs and a summary under `.forge/gates/<timestamp>/`.
+`forge gates` makes no model calls and is the fastest way to check whether a workspace is releasable. It writes command logs and a summary under `.forge/gates/<timestamp>/`.
 
-Commands come from `forge.config.json` first, then from project detection, then from task runners and scripts. A missing enabled command is a failure. `forge init` enables lint, typecheck, build, and coverage gates only when detection finds the matching command. Benchmarks remain opt-in through acceptance thresholds. Tests are required by default, so add a test command before running gates on a project that has none.
+Commands come from `forge.config.json` first, then project detection, then task runners and scripts. A missing enabled command is a failure. `forge init` enables lint, typecheck, build, and coverage gates only when detection finds a matching command. Benchmarks are opt-in through acceptance thresholds. Tests are required by default.
 
-The deterministic gates are evaluated in this order:
+The deterministic gates run in this order:
 
 1. **Install** — when `commands.install` is configured or detected.
 2. **Lint** — when `acceptance.lint` is true.
@@ -261,11 +204,11 @@ Coverage is parsed from, in order:
 - the coverage command's stdout
 - `coverage.out` (Go profiles are computed from statement counts)
 
-Supported formats include Istanbul JSON, Python coverage JSON, Cobertura XML, JaCoCo XML, LCOV, and text summaries from tools such as `go tool cover`, `nyc`, PHPUnit, SimpleCov, `mix test --cover`, JaCoCo, and tarpaulin. For Go, the extractor prefers the `total: (statements) X%` line, so multi-package output is parsed correctly even when individual packages report `0.0%`.
+Supported formats include Istanbul JSON, Python coverage JSON, Cobertura XML, JaCoCo XML, LCOV, and text summaries from tools such as `go tool cover`, `nyc`, PHPUnit, SimpleCov, `mix test --cover`, and tarpaulin. For Go, the extractor prefers the `total: (statements) X%` line, so multi-package output is parsed correctly.
 
 ### Benchmarks
 
-The benchmark command must exit successfully and report metrics either in the configured results file (default `bench/results.json`) or in stdout as JSON. Metrics can be nested under `metrics` or supplied as an array of objects with `name`/`metric`/`key` and `value`:
+The benchmark command must exit successfully and report metrics in the configured results file (default `bench/results.json`) or as JSON on stdout. Metrics can be nested under `metrics` or supplied as objects with `name`/`metric`/`key` and `value`:
 
 ```json
 {
@@ -276,35 +219,34 @@ The benchmark command must exit successfully and report metrics either in the co
 }
 ```
 
-Thresholds support `min` and `max`. A threshold whose metric is missing fails. Units are labels only; Forge compares raw numbers.
+Thresholds support `min` and `max`. A missing metric fails the threshold. Units are labels only; Forge compares raw numbers.
 
-### Secrets and external scanners
+### Security scanning
 
 The built-in scanner checks source files for API keys, tokens, private keys, hard-coded credentials, and committed `.env` files, and redacts evidence in output. To exempt an intentional test fixture, put the marker on the same line as the value:
 
 ```go
-// The scanner ignores this line.
 fixture := `AKIAIOSFODNN7EXAMPLE` // forge:allow-secret
 ```
 
 The marker is intentionally line-scoped. Prefer it over disabling a whole file.
 
-External scanners are auto-detected when the relevant tool and project marker exist:
+External scanners are auto-detected when the tool and project marker exist:
 
-- `npm audit`, `pnpm audit`, or `yarn audit` for Node.js projects
-- `pip-audit` for Python projects
-- `govulncheck` for Go projects
-- `cargo audit` for Rust projects
-- `composer audit` for PHP projects
-- `bundle-audit` for Ruby projects
-- `dotnet list package --vulnerable` for .NET projects
-- `osv-scanner` when it is installed
+- `npm audit`, `pnpm audit`, or `yarn audit` for Node.js
+- `pip-audit` for Python
+- `govulncheck` for Go
+- `cargo audit` for Rust
+- `composer audit` for PHP
+- `bundle-audit` for Ruby
+- `dotnet list package --vulnerable` for .NET
+- `osv-scanner` when installed
 
-You can also configure scanners explicitly. An explicit scanner replaces an auto-detected scanner with the same name. Supported output formats are `npm-audit`, `pnpm-audit`, `yarn-audit`, `pip-audit`, `composer-audit`, `bundler-audit`, `dotnet-vulnerable`, `osv`, `semgrep`, `trivy`, `gitleaks`, `govulncheck`, `json`, and `text`.
+Scanners can also be configured explicitly. An explicit scanner replaces an auto-detected scanner with the same name. Supported formats are `npm-audit`, `pnpm-audit`, `yarn-audit`, `pip-audit`, `composer-audit`, `bundler-audit`, `dotnet-vulnerable`, `osv`, `semgrep`, `trivy`, `gitleaks`, `govulncheck`, `json`, and `text`.
 
 ## Model routing
 
-Models are routed by stage and capability tier. Defaults use the free OpenCode models available in the development environment, but every stage can point at any provider/model. The tier is documentation and a routing hint; the actual choice is `models.<stage>.model`.
+Models are routed by stage and capability tier. The shipped defaults are examples for the OpenCode CLI; every stage can point to any available provider and model. The tier is documentation and a routing hint, while `models.<stage>.model` is the actual choice.
 
 | Stage | Tier | Default model |
 | --- | --- | --- |
@@ -319,15 +261,15 @@ Models are routed by stage and capability tier. Defaults use the free OpenCode m
 | Release | fast | `opencode/inkling-2-small-free` |
 | Triage | fast | `opencode/nemotron-3.5-lightning-free` |
 
-Each stage has fallbacks. If the selected model is unavailable or a call fails, Forge tries the next fallback, bounded by `loop.modelRetries`. `forge models` shows routing, prices, and availability warnings. `forge doctor` flags stages whose primary model is unavailable.
+Each stage has fallbacks. If the selected model is unavailable or a call fails, Forge tries the next fallback, bounded by `loop.modelRetries`. `forge models` shows routing, prices, and availability warnings; `forge doctor` flags stages whose primary model is unavailable.
 
-Override one stage for a run:
+Override a stage for one run:
 
 ```sh
 forge run --model reviewer=provider/strong-model --model implementer=provider/cheap-model
 ```
 
-Or permanently in `forge.config.json`:
+Or set routing permanently in `forge.config.json`:
 
 ```json
 {
@@ -350,7 +292,7 @@ Or permanently in `forge.config.json`:
 }
 ```
 
-Prices are USD per million tokens. They feed the budget ledger and reports. Free or unpriced models are treated as zero cost, so token usage is still recorded but a dollar limit cannot be enforced precisely.
+Prices are USD per million tokens and feed the budget ledger and reports. Unpriced models are treated as zero cost; token usage is still recorded, but a dollar limit cannot be enforced precisely.
 
 ## Configuration
 
@@ -412,16 +354,16 @@ A complete example:
 Notes:
 
 - `budget.maxUsd`, `maxMinutes`, `maxIterations`, and `maxTokens` of `0` mean unlimited.
-- `commands` can be omitted entirely. Forge detects the project's native commands and fills each missing gate; set a command to `null` to force detection for that gate.
+- `commands` may be omitted; set a command to `null` to force detection for that gate.
 - `acceptance.coverage` also accepts a number: `"coverage": 80`.
 - `acceptance.benchmarks` also accepts an array of thresholds, or `false` to disable benchmarks.
-- A command can be a string or `{ "command": "...", "timeoutMs": 600000, "optional": false }`.
-- `acceptance.security.scanners` accepts entries such as `{ "name": "semgrep", "command": "semgrep --json ...", "format": "semgrep", "required": false }`.
-- `acceptance.security.ignore` accepts glob patterns. `vendor/**` matches a directory tree; `*.min.js` matches a basename.
-- `git.checkpoint` commits after each iteration when the workspace is a git repository. Forge excludes `.forge/` through `.git/info/exclude`.
-- `release.enabled` requires the release stage to produce `README.md`, `CHANGELOG.md`, and `docs/RELEASE.md`; `release.tag` creates `v<version>` when a recognized project manifest exposes a version (`package.json`, `Cargo.toml`, `pyproject.toml`, `pom.xml`, Gradle, .NET project files, `composer.json`, gemspecs, `pubspec.yaml`, `mix.exs`, `build.sbt`, `DESCRIPTION`, CMake, Autotools, Meson, and others).
+- A command may be a string or `{ "command": "...", "timeoutMs": 600000, "optional": false }`.
+- `acceptance.security.scanners` entries look like `{ "name": "semgrep", "command": "semgrep --json ...", "format": "semgrep", "required": false }`.
+- `acceptance.security.ignore` accepts glob patterns. `vendor/**` matches a tree; `*.min.js` matches a basename.
+- `git.checkpoint` commits after each iteration in a git repository. Forge excludes `.forge/` through `.git/info/exclude`.
+- `release.enabled` requires the release stage to produce `README.md`, `CHANGELOG.md`, and `docs/RELEASE.md`; `release.tag` creates `v<version>` when a recognized manifest exposes a version.
 
-The harness fingerprints acceptance, commands, models, budget, loop, and release settings at the start of a run and checks them after every model stage. If a model edits any of them, the iteration fails with a tamper message. This prevents an agent from making the goal easier. Use `forge init --force` or edit the config outside a run when you intentionally want to change the contract.
+Forge fingerprints acceptance, commands, models, budget, loop, and release settings at the start of a run and checks them after every model stage. If a model edits any of them, the iteration fails with a tamper message. Change the contract intentionally outside a run, then use `forge init --force` if you want to regenerate control files.
 
 Environment overrides are applied after config files:
 
@@ -433,18 +375,71 @@ FORGE_BUDGET_USD=2.50
 FORGE_MAX_MINUTES=60
 ```
 
-## Reports and artifacts
+## CLI reference
+
+```text
+forge init [dir]        Create a workspace, goal, config, and schema
+forge run [dir]         Run the goal-driven loop until gates + review pass
+forge gates [dir]       Run only the machine gates (no model calls)
+forge status [dir]      Show the latest run and recent history
+forge doctor [dir]      Check OpenCode, models, commands, config, and git
+forge models [dir]      Show model routing and prices
+forge version           Show the harness version
+forge help              Show CLI help
+```
+
+The workspace argument is optional and defaults to the current directory. Both `forge run /path/to/project` and `cd /path/to/project && forge run` work.
+
+### Init flags
+
+| Flag | Meaning |
+| --- | --- |
+| `--goal <text>` | Goal statement; required for a new workspace |
+| `--force` | Overwrite generated control files and an existing `forge.config.json` |
+
+### Run flags
+
+| Flag | Meaning |
+| --- | --- |
+| `--max-iterations <n>` | Iteration limit; `0` means unlimited |
+| `--budget <usd>` | Cost budget; `0` means unlimited |
+| `--max-minutes <n>` | Wall-clock budget; `0` means unlimited |
+| `--model <stage=model>` | Override one stage model; repeatable |
+| `--config <file>` | Use a specific config file |
+| `--checkpoint` | Commit after each iteration (requires git) |
+| `--no-checkpoint` | Disable checkpoints for this run |
+| `--dry-run` | Print the resolved plan without calling models |
+| `--verbose` | More console detail |
+| `--no-progress` | Disable the live status line (also `FORGE_NO_PROGRESS=1`) |
+
+`status`, `doctor`, and `models` also accept `--json`. `status --report` prints the latest markdown report.
+
+### Live progress
+
+On an interactive terminal, `forge run` and `forge gates` draw a live status line while work is in progress:
+
+```text
+→ Implementer  ·  iter 1  ·  opencode/deepseek-v4.1-flash-free
+  ⠹ 01:24 · editing internal/gates/gates.go · 12 tools · 4.3k tok
+  ✓ Implementer  ·  1m 32s  ·  8,231 in / 1,204 out  ·  $0.00
+```
+
+The line reports elapsed time, the active tool or gate check, tool calls, tokens, and cost. Gate runs show a progress bar and completed checks, followed by a compact summary. Stage and gate results remain in the log after the live line is cleared.
+
+Progress is disabled automatically when stdout is not a terminal. It can be disabled explicitly with `--no-progress` or `FORGE_NO_PROGRESS=1`; colors honor `NO_COLOR` and `TERM=dumb`.
+
+## Artifacts
 
 Everything lives under `.forge/` in the target workspace:
 
 | Path | Purpose |
 | --- | --- |
 | `.forge/state.json` | Run history and latest status |
-| `.forge/runs/<id>/run.json` | Full run record, stage results, costs, gate outcomes |
+| `.forge/runs/<id>/run.json` | Full run record: stages, costs, gate outcomes |
 | `.forge/runs/<id>/report.md` | Human-readable run report |
 | `.forge/runs/<id>/prompts/` | Exact prompt sent to each stage |
 | `.forge/runs/<id>/events/` | Raw OpenCode JSONL event streams |
-| `.forge/runs/<id>/stages/` | Model text, token usage, errors |
+| `.forge/runs/<id>/stages/` | Model text, token usage, and errors |
 | `.forge/runs/<id>/commands/` | Command output for every gate |
 | `.forge/runs/<id>/iterations/` | Per-iteration feedback records |
 | `.forge/gates/<id>/` | Deterministic-only gate runs |
@@ -452,7 +447,7 @@ Everything lives under `.forge/` in the target workspace:
 | `.forge/security.json` | Latest machine-readable security review |
 | `.forge/triage.md` | Escalation diagnosis |
 
-The reviewer and security reports are JSON contracts. A missing or malformed report is a blocking failure rather than a silent pass.
+Review and security reports are JSON contracts; a missing or malformed report is a blocking failure rather than a silent pass.
 
 Security report shape:
 
@@ -486,43 +481,16 @@ Review report shape:
 
 A review passes only when `verdict` is `approve` and blocking findings do not exceed `acceptance.review.maxBlockingFindings`. Findings marked `blocking: true` are blocking; otherwise `high` and `critical` findings are treated as blocking.
 
-## Repository layout
-
-```text
-cmd/forge/                 CLI entry point
-internal/cli/              command parsing, commands, help, exit codes
-internal/config/           defaults, load/merge, normalization, validation, fingerprint
-internal/models/           model discovery, routing, pricing, budget ledger
-internal/orchestrator/     goal loop, stages, repair/escalation, release, reporting
-internal/runner/           OpenCode JSONL runner and event summarizer
-internal/prompts/          per-stage prompt contracts and write scopes
-internal/context/          repository snapshot, git facts, project facts
-internal/gates/            command detection, deterministic gates, review gate
-internal/coverage/         coverage parsing from JSON, XML, LCOV, Go profiles, and text
-internal/benchmark/        benchmark result parsing and threshold evaluation
-internal/security/         secret scan, scanner parsers, security gate
-internal/reports/          .forge/ state, report contracts, markdown/JSON reports
-internal/workspace/        workspace init and embedded config schema
-internal/progress/         live terminal status line and activity display
-internal/git/              checkpoints, tags, .forge exclusion
-internal/util/             commands, files, JSONL, hashes, formatting
-bench/main.go              self-benchmark for the production event parser
-internal/workspace/assets/ embedded forge.schema.json
-forge.config.json          self-hosting config used to gate Forge itself
-```
-
-The Go code uses only the standard library. Forge embeds the config schema with `//go:embed assets` and writes it into each workspace; it does not embed or scaffold application code.
-
-## Developing Forge
+## Development
 
 ```sh
-go test ./...                 # unit and integration tests
+go test ./...                          # unit and integration tests
 go test -coverprofile=coverage.out ./...
 go tool cover -func=coverage.out | tail -1
-go vet ./...                  # lint
-go build ./...                # build
-go run ./bench                # writes bench/results.json
-gofmt -w cmd internal bench   # format
+go vet ./...                           # static checks
+go build ./...                         # build all packages
+go run ./bench                         # write bench/results.json
+gofmt -w cmd internal bench            # format
 ```
 
 Run the harness against itself:
@@ -531,7 +499,7 @@ Run the harness against itself:
 go run ./cmd/forge gates
 ```
 
-The self-hosting `forge.config.json` in this directory requires 70% statement coverage, `go vet`, a successful build, and `parse_ops_per_sec >= 100000` from the real JSONL parser benchmark. At the time of writing, the suite is near 79% coverage and the parser benchmark is comfortably above the 100k threshold on the development machine, but treat those numbers as measurements, not guarantees.
+The checked-in `forge.config.json` gates Forge itself with a 70% coverage floor, `go vet`, a successful build, and a parser benchmark threshold. Run the self-gates before opening a pull request.
 
 To run the full model loop on Forge itself:
 
@@ -539,15 +507,32 @@ To run the full model loop on Forge itself:
 go run ./cmd/forge run --max-iterations 2 --budget 5
 ```
 
-This consumes OpenCode model time. Free-model usage limits are enforced by the provider and can stop a run even when the harness is working correctly.
+This consumes OpenCode model time. Provider-side usage limits may stop a run even when the harness is working correctly.
 
-### Testing guidance
+Testing guidance:
 
 - Add tests next to the package they exercise.
-- Prefer fake `opencode` scripts and temporary directories; do not depend on network calls, real model calls, or globally installed tools in unit tests.
+- Prefer fake `opencode` scripts and temporary directories. Do not depend on network calls, real model calls, or globally installed tools in unit tests.
 - Cover success and failure paths for gates: missing commands, optional failures, coverage thresholds, benchmark thresholds, secret findings, scanner failures, and report contract failures.
 - Keep the runner tolerant of unknown JSONL event types and malformed lines.
-- If you change an acceptance or report contract, update the config normalization, validation, prompts, reports, schema, and this README together.
+- When changing an acceptance or report contract, update config normalization, validation, prompts, reports, the schema, and documentation together.
+
+## Contributing
+
+Issues and pull requests are welcome. For bugs, include the Forge version, workspace type, the command you ran, and the relevant output from `forge doctor` or `.forge/`. For feature proposals, describe the problem first and the smallest change that solves it.
+
+Before opening a pull request:
+
+1. Create a focused branch for the change.
+2. Add or update tests and documentation.
+3. Run `go test ./...`, `go vet ./...`, `go build ./...`, and `go run ./cmd/forge gates`.
+4. Describe the motivation, behavior change, and validation in the PR.
+
+Keep changes focused and respect the boundaries described in [Limitations](#limitations). Be respectful and constructive in issues and reviews.
+
+Security issues should be reported privately through [GitHub Security Advisories](https://github.com/soub4i/forge/security/advisories/new), not in public issues.
+
+Useful links: [issues](https://github.com/soub4i/forge/issues) · [pull requests](https://github.com/soub4i/forge/pulls) · [releases](https://github.com/soub4i/forge/releases)
 
 ## Troubleshooting
 
@@ -557,7 +542,7 @@ This consumes OpenCode model time. Free-model usage limits are enforced by the p
 
 **`forge run` says no test or benchmark command exists.** Run `forge doctor` and `forge gates`; either add commands to `forge.config.json` or let the tester/benchmarker stage create them on the first iteration.
 
-**Coverage is reported as 0% or missing.** Make the coverage command print a recognizable percentage or write a supported summary (Istanbul JSON, Cobertura XML, JaCoCo XML, LCOV, or a text summary), then set `acceptance.coverage.file` explicitly if discovery does not find it. For Go, `go test -coverprofile=coverage.out ./...` works without printing a summary because Forge computes coverage from the profile; `go tool cover -func=coverage.out | tail -1` also works.
+**Coverage is reported as 0% or missing.** Make the coverage command print a recognizable percentage or write a supported summary, then set `acceptance.coverage.file` explicitly if discovery does not find it. For Go, `go test -coverprofile=coverage.out ./...` works without printing a summary because Forge computes coverage from the profile.
 
 **Benchmarks fail with a missing metric.** Inspect the configured `resultsFile` and `forge gates` output. Forge flattens nested JSON, but the threshold's metric name must match the flattened key exactly.
 
@@ -569,13 +554,13 @@ This consumes OpenCode model time. Free-model usage limits are enforced by the p
 
 ## Limitations
 
-- The model loop assumes OpenCode's `run --format json` event schema. If that schema changes, update `internal/runner`.
-- Review and security stages are only as good as the model behind them. The deterministic gates are the hard floor; the reviewer is a second signal, not a proof.
-- Command detection is intentionally best-effort. It recognizes common manifests and task runners, but unusual layouts may need explicit `commands`. Configure `acceptance.coverage.file` for a machine-readable summary when your test runner supports it.
+- The model loop assumes OpenCode's `run --format json` event schema. If that schema changes, update the runner.
+- Review and security stages are only as good as the model behind them. Deterministic gates are the hard floor; the reviewer is a second signal, not a proof.
+- Command detection is intentionally best-effort. Unusual layouts may need explicit `commands`, and `acceptance.coverage.file` may need to point at a machine-readable summary.
 - Forge does not sandbox model commands. Run it in a workspace you are willing to let an agent modify, and use git checkpoints for recovery.
 - Dollar budgets rely on provider-reported cost or configured `pricing`; unpriced models are treated as free.
-- Forge does not scaffold application code or offer starter templates. `forge init` adds control files to an existing project or an empty directory; use your own tooling to create and maintain the project.
-- Free OpenCode models are subject to provider quotas and can fail independently of the harness.
+- Forge does not scaffold application code or offer starter templates. `forge init` adds control files to an existing project or an empty directory.
+- Provider-side quotas and usage limits can fail a model call independently of the harness.
 
 ## License
 
