@@ -2,6 +2,12 @@
 
 All notable changes to Forge are documented here. The format follows Keep a Changelog, and releases use semantic versioning.
 
+## [1.3.1] - 2026-11-22
+
+### Fixed
+
+- Gate progress no longer truncates the final gate name early; activity text is now trimmed only to the actual terminal width.
+
 ## [1.3.0] - 2026-11-21
 
 ### Removed

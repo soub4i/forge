@@ -101,6 +101,23 @@ func TestBar(t *testing.T) {
 	}
 }
 
+func TestSetActivityUsesTerminalWidth(t *testing.T) {
+	var out bytes.Buffer
+	display := New(Options{Writer: &out, Enabled: true, Width: 100})
+	display.Start("Machine gates", "iteration 1")
+	display.SetActivity("check 5/5 [████████] lint ✓ build ✓ test ✓ coverage ✓ benchmark ✓")
+	time.Sleep(150 * time.Millisecond)
+	display.Close()
+
+	text := out.String()
+	if !strings.Contains(text, "benchmark ✓") {
+		t.Fatalf("late gate name was lost: %q", text)
+	}
+	if strings.Contains(text, "bench…") {
+		t.Fatalf("activity was truncated before rendering: %q", text)
+	}
+}
+
 func TestTruncateAndFormatCompact(t *testing.T) {
 	if got := truncate("abcdef", 4); got != "abc…" {
 		t.Fatalf("truncate = %q", got)
