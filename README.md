@@ -190,6 +190,10 @@ forge run --config ./configs/strict.json --checkpoint
 
 ### Live progress
 
+![Forge gates live progress](docs/forge-gates.gif)
+
+*Recording of `forge gates` on the Forge repository: live spinner, gate progress bar, completion checklist, and final result.*
+
 On an interactive terminal, `forge run` and `forge gates` draw a live status line while work is in progress:
 
 ```text
