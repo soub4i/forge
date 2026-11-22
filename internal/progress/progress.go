@@ -135,7 +135,10 @@ func (d *Display) SetActivity(text string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.running {
-		d.activity = sanitize(text, 60)
+		// Keep the full activity here; renderLocked truncates to the real
+		// terminal width. Truncating early hid the last gate name in narrow
+		// but still sufficient terminals.
+		d.activity = normalize(text)
 	}
 }
 
@@ -320,9 +323,12 @@ func truncate(text string, max int) string {
 	return string(runes[:max-1]) + "…"
 }
 
+func normalize(text string) string {
+	return strings.Join(strings.Fields(text), " ")
+}
+
 func sanitize(text string, max int) string {
-	text = strings.Join(strings.Fields(text), " ")
-	return truncate(text, max)
+	return truncate(normalize(text), max)
 }
 
 func describeTool(part map[string]any, cwd string) string {

@@ -25,7 +25,7 @@ import (
 )
 
 // Version is the Forge harness version.
-const Version = "1.3.0"
+const Version = "1.3.1"
 
 // Flags is a small permissive flag parser matching the JS harness.
 type Flags struct {
